@@ -5,3 +5,12 @@ libdrm2
 libgtk-3-0
 libgbm1
 libasound2
+libxss1
+libxrandr2
+libu2f-udev
+libvulkan1
+xvfb
+fonts-liberation
+libappindicator3-1
+libxss1
+libgconf-2-4
