@@ -7,6 +7,9 @@ import openpyxl
 from openpyxl.styles import Alignment
 import base64
 
+import subprocess
+subprocess.run(["playwright", "install"], check=True)
+
 # 팝업창 닫기 함수
 async def close_notice_popups(page):
     for _ in range(5):
