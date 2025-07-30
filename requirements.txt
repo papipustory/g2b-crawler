@@ -2,3 +2,5 @@ streamlit
 pandas
 playwright
 openpyxl
+# For playwright to install dependencies
+playwright==1.42.0
