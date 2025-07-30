@@ -14,17 +14,42 @@ import sys
 def install_playwright():
     """Playwright 브라우저를 설치합니다."""
     try:
-        # 이미 설치되어 있는지 확인
-        if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright/chromium*")):
-            with st.spinner("브라우저를 설치하는 중입니다... (최초 1회만 실행됩니다)"):
-                result = subprocess.run([
-                    sys.executable, "-m", "playwright", "install", "chromium"
-                ], capture_output=True, text=True, timeout=300)
+        with st.spinner("브라우저를 설치하는 중입니다... (최초 1회만 실행됩니다)"):
+            # 시스템 의존성 설치
+            subprocess.run([
+                "apt-get", "update"
+            ], capture_output=True, check=False)
+            
+            # Playwright 설치 (여러 방법 시도)
+            install_commands = [
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+                ["playwright", "install", "chromium"],
+                ["playwright", "install", "--with-deps", "chromium"]
+            ]
+            
+            for cmd in install_commands:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    if result.returncode == 0:
+                        st.success("브라우저 설치 완료!")
+                        return True
+                except Exception as e:
+                    continue
+            
+            # 모든 방법 실패 시 마지막 시도
+            try:
+                import playwright
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    p.chromium.launch()
+                return True
+            except Exception:
+                pass
                 
-                if result.returncode != 0:
-                    st.error(f"브라우저 설치 실패: {result.stderr}")
-                    return False
-        return True
+            st.error("브라우저 설치에 실패했습니다. 관리자에게 문의하세요.")
+            return False
+            
     except Exception as e:
         st.error(f"브라우저 설치 중 오류: {str(e)}")
         return False
