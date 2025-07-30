@@ -8,7 +8,10 @@ from openpyxl.styles import Alignment
 import base64
 
 import subprocess
-subprocess.run(["playwright", "install"], check=True)
+
+
+if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright")):
+    subprocess.run(["playwright", "install", "chromium"], check=True)
 
 # 팝업창 닫기 함수
 async def close_notice_popups(page):
