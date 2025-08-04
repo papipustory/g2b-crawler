@@ -50,30 +50,36 @@ def ensure_playwright_installed():
         return False
 
 async def close_notice_popups(page):
-    for _ in range(5):
+    for loop_idx in range(5):
         popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+        print(f"[팝업 닫기] {loop_idx+1}회차, 발견된 팝업 수: {len(popup_divs)}")
         closed = False
-        for popup in popup_divs:
+        for idx, popup in enumerate(popup_divs):
             try:
                 for sel in ["button[class*='w2window_close']", "input[type='button'][value='닫기']"]:
                     btn = await popup.query_selector(sel)
                     if btn:
+                        print(f"[팝업 닫기] 팝업 {idx+1}: '{sel}' 버튼 클릭")
                         await btn.click()
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.3)
                         closed = True
                         break
                 checkbox = await popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
                 if checkbox:
+                    print(f"[팝업 닫기] 팝업 {idx+1}: '오늘 하루' 체크박스 클릭")
                     await checkbox.check()
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.2)
                     btn = await popup.query_selector("input[type='button'][value='닫기']")
                     if btn:
+                        print(f"[팝업 닫기] 팝업 {idx+1}: '닫기' 버튼 클릭(체크박스 이후)")
                         await btn.click()
                         closed = True
                         break
-            except:
+            except Exception as e:
+                print(f"[팝업 닫기] 팝업 {idx+1} 처리 중 에러: {e}")
                 continue
         if not closed:
+            print("[팝업 닫기] 더 이상 닫을 팝업이 없음, 종료")
             break
         await asyncio.sleep(0.5)
 
@@ -396,21 +402,33 @@ if st.button("크롤링 시작"):
     with ThreadPoolExecutor(max_workers=1) as executor:
         try:
             status_text.text("브라우저 시작 중...")
-            progress_bar.progress(20)
+            progress_bar.progress(10)
             
             future = executor.submit(run_crawler)
             
-            # 결과 대기
             import time
-            for i in range(21, 90):
-                time.sleep(0.1)
-                progress_bar.progress(i)
-                if i == 40:
-                    status_text.text("페이지 로딩 중...")
+            for i in range(11, 100):
+                # 단계별 상태 표시
+                if i == 15:
+                    status_text.text("팝업창 닫는 중...")
+                elif i == 25:
+                    status_text.text("스크롤 하단으로 내리는 중...")
+                elif i == 35:
+                    status_text.text("제안공고목록 클릭 중...")
+                elif i == 50:
+                    status_text.text("3개월 라디오 버튼 선택 중...")
                 elif i == 60:
-                    status_text.text("데이터 수집 중...")
+                    status_text.text("검색어 입력 중...")
+                elif i == 70:
+                    status_text.text("페이지당 표시 개수 설정 중...")
                 elif i == 80:
+                    status_text.text("적용/검색 버튼 클릭 중...")
+                elif i == 90:
+                    status_text.text("테이블 데이터 추출 중...")
+                elif i == 95:
                     status_text.text("결과 처리 중...")
+                time.sleep(0.07)
+                progress_bar.progress(i)
             
             result = future.result(timeout=180)  # 3분 타임아웃
             
