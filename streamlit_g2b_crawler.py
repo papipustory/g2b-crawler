@@ -146,7 +146,7 @@ async def find_and_click_by_text(page, text, element_type="a"):
         debug_log(f"텍스트 검색 오류: {e}")
         return False
 
-async def main():
+async def main(status_text):
     """메인 크롤링 함수"""
     browser = None
     try:
@@ -175,14 +175,15 @@ async def main():
             page = await context.new_page()
             
             debug_log("나라장터 페이지 접속...")
-            # 타임아웃 증가 (3초 → 30초)
             await page.goto("https://shop.g2b.go.kr/", timeout=30000)
-            # 로딩 상태 대기 타임아웃도 증가 (5초 → 30초)
             await page.wait_for_load_state('domcontentloaded', timeout=30000)
-            await asyncio.sleep(3)
-
+            await asyncio.sleep(3)  # 사이트가 완전히 뜨고 팝업이 나타날 때까지 충분히 대기
+            status_text.text("팝업창 닫는 중...")
             await close_notice_popups(page)
-            await asyncio.sleep(1) # 팝업 닫기 후 대기
+            await asyncio.sleep(1)  # 팝업 닫기 후에도 잠깐 대기
+            status_text.text("스크롤 하단으로 내리는 중...")
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(1)
 
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(1) # 스크롤 후 대기
@@ -375,7 +376,7 @@ def run_crawler():
         asyncio.set_event_loop(loop)
         try:
             debug_log("이벤트 루프 시작")
-            return loop.run_until_complete(main())
+            return loop.run_until_complete(main(st.empty()))
         except Exception as e:
             error_msg = f"이벤트 루프 오류: {str(e)}"
             debug_log(error_msg)
