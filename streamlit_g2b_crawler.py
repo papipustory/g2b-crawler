@@ -7,46 +7,94 @@ import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import traceback
+import logging
+
+# 로깅 설정
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="나라장터 제안공고 크롤러", layout="centered")
 
 st.title("💻 나라장터 제안공고 크롤링")
+
+# 디버그 정보 표시
+if st.checkbox("🔍 디버그 모드 활성화"):
+    st.session_state.debug_mode = True
+else:
+    st.session_state.debug_mode = False
+
+def debug_log(message):
+    """디버그 로그 출력"""
+    if st.session_state.get('debug_mode', False):
+        st.write(f"🔍 DEBUG: {message}")
+    print(f"DEBUG: {message}")
 
 # Playwright 브라우저 설치 확인 및 설치
 @st.cache_resource
 def ensure_playwright_installed():
     try:
         import subprocess
+        debug_log("Playwright 설치 확인 시작...")
         result = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], 
                               capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             st.error(f"Playwright 설치 실패: {result.stderr}")
+            debug_log(f"Playwright 설치 실패: {result.stderr}")
             return False
+        debug_log("Playwright 설치 완료")
         return True
     except Exception as e:
         st.error(f"Playwright 설치 중 오류: {e}")
+        debug_log(f"Playwright 설치 오류: {e}")
         return False
 
-def run_crawler():
-    """별도 스레드에서 크롤러 실행"""
-    
-    async def wait_and_click(page, selector, name, timeout=5000, scroll=True):
-        try:
-            if scroll:
-                await page.evaluate(f'''
-                    var el = document.querySelector('{selector}');
-                    if (el) el.scrollIntoView();
-                ''')
-            await page.wait_for_selector(selector, timeout=timeout)
-            await page.click(selector)
-            return True
-        except Exception:
-            print(f"[실패] {name} 클릭 실패: selector {selector}")
-            return False
+async def close_notice_popups(page):
+    for _ in range(5):
+        popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+        closed = False
+        for popup in popup_divs:
+            try:
+                for sel in ["button[class*='w2window_close']", "input[type='button'][value='닫기']"]:
+                    btn = await popup.query_selector(sel)
+                    if btn:
+                        await btn.click()
+                        await asyncio.sleep(0.2)
+                        closed = True
+                        break
+                checkbox = await popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
+                if checkbox:
+                    await checkbox.check()
+                    await asyncio.sleep(0.1)
+                    btn = await popup.query_selector("input[type='button'][value='닫기']")
+                    if btn:
+                        await btn.click()
+                        closed = True
+                        break
+            except:
+                continue
+        if not closed:
+            break
+        await asyncio.sleep(0.5)
 
-    async def find_and_click_by_text(page, text, element_type="a"):
+async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
+    try:
+        await page.wait_for_selector(selector, timeout=timeout, state="visible")
+        elem = await page.query_selector(selector)
+        if elem and await elem.is_visible():
+            if scroll:
+                await elem.scroll_into_view_if_needed()
+                await asyncio.sleep(0.02)
+            await elem.click()
+            return True
+        return False
+    except:
+        return False
+
+async def find_and_click_by_text(page, text, element_type="a"):
         """텍스트로 요소를 찾아서 클릭"""
         try:
+            debug_log(f"텍스트 검색 시작: '{text}' ({element_type})")
             # 다양한 방법으로 텍스트 검색
             selectors = [
                 f'{element_type}:has-text("{text}")',
@@ -58,48 +106,44 @@ def run_crawler():
             
             for selector in selectors:
                 try:
+                    debug_log(f"셀렉터 시도: {selector}")
                     if selector.startswith('//'):
                         # XPath 사용
                         elements = await page.query_selector_all(f'xpath={selector}')
                     else:
                         elements = await page.query_selector_all(selector)
                     
-                    for element in elements:
+                    debug_log(f"찾은 요소 수: {len(elements)}")
+                    
+                    for i, element in enumerate(elements):
                         try:
                             await element.scroll_into_view_if_needed()
                             await asyncio.sleep(0.5)
                             await element.click()
-                            print(f"성공: '{text}' 텍스트로 클릭")
+                            debug_log(f"성공: '{text}' 텍스트로 클릭 (요소 {i+1})")
                             return True
                         except Exception as e:
-                            print(f"클릭 실패: {e}")
+                            debug_log(f"요소 {i+1} 클릭 실패: {e}")
                             continue
                 except Exception as e:
-                    print(f"셀렉터 실패 {selector}: {e}")
+                    debug_log(f"셀렉터 실패 {selector}: {e}")
                     continue
             
+            debug_log(f"텍스트 검색 실패: '{text}'")
             return False
         except Exception as e:
-            print(f"텍스트 검색 실패: {e}")
+            debug_log(f"텍스트 검색 오류: {e}")
             return False
 
-    async def close_notice_popups(page):
-        try:
-            popup_buttons = await page.query_selector_all("div.popup a")
-            for btn in popup_buttons:
-                text = await btn.inner_text()
-                if "닫기" in text:
-                    await btn.click()
-        except:
-            pass
-
-    async def main():
+async def main():
         browser = None
         try:
+            debug_log("크롤러 시작...")
             # Playwright 동적 import (설치 후)
             from playwright.async_api import async_playwright
             
             async with async_playwright() as p:
+                debug_log("Playwright 컨텍스트 생성...")
                 # 브라우저 실행 옵션
                 browser_args = [
                     '--no-sandbox',
@@ -117,6 +161,7 @@ def run_crawler():
                     '--disable-renderer-backgrounding'
                 ]
                 
+                debug_log("브라우저 시작...")
                 browser = await p.chromium.launch(
                     headless=True,
                     args=browser_args
@@ -130,6 +175,7 @@ def run_crawler():
                 page = await context.new_page()
                 
                 # 타임아웃 증가
+                debug_log("나라장터 페이지 접속...")
                 await page.goto("https://shop.g2b.go.kr/", timeout=60000)
                 await page.wait_for_load_state('domcontentloaded', timeout=60000)
                 await asyncio.sleep(3)
@@ -139,12 +185,13 @@ def run_crawler():
                 await asyncio.sleep(2)
 
                 # 제안공고목록 버튼 찾기 - 텍스트 기반 검색 우선
-                print("제안공고목록 버튼 검색 시작...")
+                debug_log("제안공고목록 버튼 검색 시작...")
                 
                 # 1. 텍스트 기반 검색 시도
                 if await find_and_click_by_text(page, "제안공고목록", "a"):
-                    print("텍스트 기반 검색으로 제안공고목록 버튼 클릭 성공")
+                    debug_log("텍스트 기반 검색으로 제안공고목록 버튼 클릭 성공")
                 else:
+                    debug_log("텍스트 기반 검색 실패, 셀렉터 기반 검색 시도...")
                     # 2. 기존 셀렉터 기반 검색
                     btn_selectors = [
                         'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
@@ -161,31 +208,38 @@ def run_crawler():
                             break
                     
                     if not clicked:
+                        debug_log("셀렉터 기반 검색 실패, 모든 링크 검색 시도...")
                         # 3. 모든 링크 검색
                         all_a = await page.query_selector_all("a")
-                        for a in all_a:
+                        debug_log(f"페이지의 모든 링크 수: {len(all_a)}")
+                        for i, a in enumerate(all_a):
                             try:
                                 title = await a.get_attribute("title")
                                 href = await a.get_attribute("href")
                                 inner = await a.inner_text()
+                                debug_log(f"링크 {i+1}: title='{title}', text='{inner}', href='{href}'")
                                 if (title and "제안공고" in title) or (inner and "제안공고" in inner):
                                     if href and href.strip() != "javascript:void(null)":
                                         await a.scroll_into_view_if_needed()
                                         await asyncio.sleep(0.5)
                                         await a.click()
                                         clicked = True
+                                        debug_log(f"링크 {i+1} 클릭 성공")
                                         break
-                            except:
+                            except Exception as e:
+                                debug_log(f"링크 {i+1} 처리 오류: {e}")
                                 continue
                     
                     if not clicked:
+                        debug_log("모든 방법 실패: 제안공고목록 버튼을 찾을 수 없음")
                         return {"error": "제안공고목록 버튼을 찾을 수 없습니다."}
 
                 await asyncio.sleep(2)
 
                 # 3개월 라디오 버튼 선택 - 텍스트 기반 검색
-                print("3개월 라디오 버튼 검색...")
+                debug_log("3개월 라디오 버튼 검색...")
                 if not await find_and_click_by_text(page, "3개월", "input"):
+                    debug_log("텍스트 기반 검색 실패, 기존 방법 시도...")
                     # 기존 방법으로 시도
                     await page.evaluate("""
                         const radio = document.querySelector('input[title="3개월"]');
@@ -198,23 +252,30 @@ def run_crawler():
                 await asyncio.sleep(1)
 
                 # 검색어 입력
-                print("검색어 입력...")
+                debug_log("검색어 입력...")
                 input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
                 if input_elem:
                     await input_elem.fill('컴퓨터')
+                    debug_log("검색어 입력 성공 (기본 셀렉터)")
                 else:
+                    debug_log("기본 셀렉터 실패, 대안 검색...")
                     # 대안: 모든 input 요소 중에서 찾기
                     inputs = await page.query_selector_all('input[type="text"]')
-                    for inp in inputs:
+                    debug_log(f"찾은 텍스트 입력 필드 수: {len(inputs)}")
+                    for i, inp in enumerate(inputs):
                         try:
                             placeholder = await inp.get_attribute('placeholder')
+                            debug_log(f"입력 필드 {i+1}: placeholder='{placeholder}'")
                             if placeholder and '공고명' in placeholder:
                                 await inp.fill('컴퓨터')
+                                debug_log(f"입력 필드 {i+1}에 검색어 입력 성공")
                                 break
-                        except:
+                        except Exception as e:
+                            debug_log(f"입력 필드 {i+1} 처리 오류: {e}")
                             continue
 
                 # 페이지당 표시 개수 설정
+                debug_log("페이지당 표시 개수 설정...")
                 await page.evaluate("""
                     const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
                     selects.forEach(select => {
@@ -226,42 +287,50 @@ def run_crawler():
                 await asyncio.sleep(1)
 
                 # 적용 및 검색 버튼 클릭 - 텍스트 기반 검색
-                print("적용 버튼 클릭...")
+                debug_log("적용 버튼 클릭...")
                 if not await find_and_click_by_text(page, "적용", "input"):
                     await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
                 
                 await asyncio.sleep(1)
                 
-                print("검색 버튼 클릭...")
+                debug_log("검색 버튼 클릭...")
                 if not await find_and_click_by_text(page, "검색", "input"):
                     await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
                 
                 await asyncio.sleep(3)
 
                 # 테이블 데이터 추출
-                print("테이블 데이터 추출...")
+                debug_log("테이블 데이터 추출...")
                 table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
                 if table_elem:
+                    debug_log("테이블 찾기 성공")
                     rows = await table_elem.query_selector_all('tr')
+                    debug_log(f"테이블 행 수: {len(rows)}")
                     data = []
-                    for row in rows:
-                        tds = await row.query_selector_all('td')
-                        cols = []
-                        for td in tds:
-                            nobr = await td.query_selector('nobr')
-                            if nobr:
-                                text = await nobr.inner_text()
-                            else:
-                                a = await td.query_selector('a')
-                                if a:
-                                    text = await a.inner_text()
+                    for i, row in enumerate(rows):
+                        try:
+                            tds = await row.query_selector_all('td')
+                            cols = []
+                            for td in tds:
+                                nobr = await td.query_selector('nobr')
+                                if nobr:
+                                    text = await nobr.inner_text()
                                 else:
-                                    text = await td.inner_text()
-                            cols.append(text.strip())
-                        if cols and any(cols):
-                            data.append(cols)
+                                    a = await td.query_selector('a')
+                                    if a:
+                                        text = await a.inner_text()
+                                    else:
+                                        text = await td.inner_text()
+                                cols.append(text.strip())
+                            if cols and any(cols):
+                                data.append(cols)
+                                debug_log(f"행 {i+1} 데이터: {cols[:3]}...")  # 처음 3개 컬럼만 로그
+                        except Exception as e:
+                            debug_log(f"행 {i+1} 처리 오류: {e}")
+                            continue
 
                     if data:
+                        debug_log(f"총 {len(data)}개 행 데이터 수집 완료")
                         new_df = pd.DataFrame(data)
                         headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
                         if len(new_df.columns) < len(headers):
@@ -280,13 +349,16 @@ def run_crawler():
                                 combined_df = pd.concat([old_df, new_df])
                                 combined_df.drop_duplicates(subset="제안공고번호", keep='last', inplace=True)
                                 combined_df.reset_index(drop=True, inplace=True)
-                            except:
+                                debug_log("기존 데이터와 병합 완료")
+                            except Exception as e:
+                                debug_log(f"기존 데이터 병합 오류: {e}")
                                 combined_df = new_df
                         else:
                             combined_df = new_df
 
                         # Excel 파일 저장
                         combined_df.to_excel(file_path, index=False)
+                        debug_log("Excel 파일 저장 완료")
 
                         # 스타일링
                         wb = openpyxl.load_workbook(file_path)
@@ -299,36 +371,48 @@ def run_crawler():
                         for i, width in enumerate(col_widths, start=1):
                             ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
                         wb.save(file_path)
+                        debug_log("Excel 스타일링 완료")
 
                         return {"success": True, "data": combined_df, "file_path": file_path}
                     else:
+                        debug_log("수집된 데이터가 없음")
                         return {"error": "공고 목록을 찾을 수 없습니다."}
                 else:
+                    debug_log("테이블을 찾을 수 없음")
                     return {"error": "테이블을 찾을 수 없습니다."}
 
         except Exception as e:
-            return {"error": f"크롤링 중 오류 발생: {str(e)}"}
+            error_msg = f"크롤링 중 오류 발생: {str(e)}"
+            debug_log(error_msg)
+            debug_log(f"상세 오류: {traceback.format_exc()}")
+            return {"error": error_msg}
 
         finally:
             if browser:
                 try:
                     await browser.close()
-                except:
-                    pass
+                    debug_log("브라우저 종료 완료")
+                except Exception as e:
+                    debug_log(f"브라우저 종료 오류: {e}")
 
     # 새로운 이벤트 루프에서 실행
     def run_in_new_loop():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            debug_log("이벤트 루프 시작")
             return loop.run_until_complete(main())
         except Exception as e:
-            return {"error": f"이벤트 루프 오류: {str(e)}"}
+            error_msg = f"이벤트 루프 오류: {str(e)}"
+            debug_log(error_msg)
+            debug_log(f"이벤트 루프 상세 오류: {traceback.format_exc()}")
+            return {"error": error_msg}
         finally:
             try:
                 loop.close()
-            except:
-                pass
+                debug_log("이벤트 루프 종료")
+            except Exception as e:
+                debug_log(f"이벤트 루프 종료 오류: {e}")
     
     return run_in_new_loop()
 
@@ -370,6 +454,8 @@ if st.button("크롤링 시작"):
             
             if "error" in result:
                 st.error(f"❌ {result['error']}")
+                if st.session_state.get('debug_mode', False):
+                    st.error("🔍 디버그 모드가 활성화되어 있습니다. 위의 로그를 확인하세요.")
             elif "success" in result:
                 st.success("✅ 크롤링 완료!")
                 
@@ -389,7 +475,16 @@ if st.button("크롤링 시작"):
                 st.info(f"총 {len(result['data'])}개의 공고를 수집했습니다.")
                 
         except Exception as e:
-            st.error(f"❌ 실행 중 오류: {str(e)}")
+            error_msg = f"❌ 실행 중 오류: {str(e)}"
+            st.error(error_msg)
+            debug_log(error_msg)
+            debug_log(f"실행 오류 상세: {traceback.format_exc()}")
         finally:
             progress_bar.empty()
             status_text.empty()
+
+# 디버그 정보 표시
+if st.session_state.get('debug_mode', False):
+    st.markdown("---")
+    st.markdown("### 🔍 디버그 모드 활성화됨")
+    st.info("위의 로그에서 각 단계별 진행 상황과 오류를 확인할 수 있습니다.")
