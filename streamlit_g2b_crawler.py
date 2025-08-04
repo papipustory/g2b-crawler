@@ -338,7 +338,7 @@ def close_notice_popups_sync(page):
     except Exception as e:
         print(f"팝업 닫기 중 오류: {e}")
 
-def wait_and_click_sync(page, selector: str, desc: str, timeout: int = 3000, scroll: bool = True) -> bool:
+def wait_and_click_sync(page, selector: str, desc: str, timeout: int = 10000, scroll: bool = True) -> bool:
     """
     특정 셀렉터의 요소가 나타날 때까지 대기한 후 클릭하는 동기 함수입니다.
     """
@@ -407,6 +407,7 @@ def crawl_and_save_sync(search_term: str, progress_callback=None) -> str:
             btn_selectors = [
                 'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
                 'a[title*="제안공고목록"]',
+                'text=제안공고목록',
                 'a:has-text("제안공고목록")',
                 '//a[contains(text(), "제안공고목록")]'
             ]
