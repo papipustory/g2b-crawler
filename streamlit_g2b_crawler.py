@@ -8,48 +8,39 @@ from openpyxl.styles import Alignment
 import base64
 import subprocess
 import sys
+# 'time' 모듈은 현재 사용되지 않으므로 임포트를 제거했습니다.
 
 # Playwright 브라우저 설치 함수
 @st.cache_resource
-def install_playwright():
-    """Playwright 브라우저를 설치합니다."""
+def install_playwright() -> bool:
+    """
+    Playwright용 브라우저 바이너리를 설치합니다.
+
+    Streamlit Cloud에서는 시스템 패키지가 이미 `packages.txt`를 통해 설치되므로
+    여기서는 `playwright install`만 호출합니다. 여러 명령을 시도해보고,
+    성공하면 True를 반환합니다.
+    """
     try:
         with st.spinner("브라우저를 설치하는 중입니다... (최초 1회만 실행됩니다)"):
-            # 시스템 의존성 설치
-            subprocess.run([
-                "apt-get", "update"
-            ], capture_output=True, check=False)
-            
-            # Playwright 설치 (여러 방법 시도)
-            install_commands = [
+            install_cmds = [
+                # python -m playwright install (브라우저 전체 설치)
+                [sys.executable, "-m", "playwright", "install"],
+                # 특정 브라우저만 설치
                 [sys.executable, "-m", "playwright", "install", "chromium"],
-                [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
-                ["playwright", "install", "chromium"],
-                ["playwright", "install", "--with-deps", "chromium"]
+                # fallback to playwright executable in PATH
+                ["playwright", "install"]
             ]
-            
-            for cmd in install_commands:
+            for cmd in install_cmds:
                 try:
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                     if result.returncode == 0:
                         st.success("브라우저 설치 완료!")
                         return True
-                except Exception as e:
+                except Exception:
+                    # 다른 명령 시도로 넘어갑니다.
                     continue
-            
-            # 모든 방법 실패 시 마지막 시도
-            try:
-                import playwright
-                from playwright.sync_api import sync_playwright
-                with sync_playwright() as p:
-                    p.chromium.launch()
-                return True
-            except Exception:
-                pass
-                
             st.error("브라우저 설치에 실패했습니다. 관리자에게 문의하세요.")
             return False
-            
     except Exception as e:
         st.error(f"브라우저 설치 중 오류: {str(e)}")
         return False
@@ -376,30 +367,39 @@ def main():
         # 진행상황 표시
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
-        def update_progress(message):
+
+        # 진행 상황과 진행률을 업데이트하는 내부 함수
+        def update_progress(message: str):
+            """
+            크롤링 단계별 메시지를 표시하고 대략적인 진행률을 업데이트합니다.
+            message 내용에 따라 progress_bar를 적절히 증가시킵니다.
+            """
             status_text.text(f"⏳ {message}")
-        
+            # 단계별 키워드에 따라 진행률 할당
+            if "브라우저 시작" in message or "브라우저 준비" in message:
+                progress_bar.progress(10)
+            elif "접속" in message:
+                progress_bar.progress(20)
+            elif "팝업" in message:
+                progress_bar.progress(30)
+            elif "이동" in message:
+                progress_bar.progress(40)
+            elif "검색 조건" in message:
+                progress_bar.progress(50)
+            elif "검색 실행" in message:
+                progress_bar.progress(60)
+            elif "데이터 수집" in message:
+                progress_bar.progress(80)
+            elif "데이터 저장" in message:
+                progress_bar.progress(90)
+
         # 크롤링 실행
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
-            # 진행률 업데이트
-            for i in range(10, 101, 10):
-                progress_bar.progress(i)
-                if i <= 30:
-                    update_progress("브라우저 준비 중...")
-                elif i <= 60:
-                    update_progress(f"'{search_term}' 검색 중...")
-                else:
-                    update_progress("데이터 수집 및 저장 중...")
-                
-                if i < 100:
-                    asyncio.sleep(0.5)
-            
+            # 비동기 크롤러 실행
             result = loop.run_until_complete(crawl_and_save(search_term, update_progress))
-            
+            # 완료 후 진행률 100% 설정
             progress_bar.progress(100)
             status_text.empty()
             
@@ -426,10 +426,10 @@ def main():
                     create_download_link("g2b_result.xlsx")
             else:
                 st.error(result)
-                
         except Exception as e:
             st.error(f"예기치 못한 오류가 발생했습니다: {str(e)}")
         finally:
+            # 진행률 컴포넌트 정리
             progress_bar.empty()
             status_text.empty()
     
