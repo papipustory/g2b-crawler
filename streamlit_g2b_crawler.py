@@ -395,14 +395,28 @@ def main():
 
         # 크롤링 실행
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             # 비동기 크롤러 실행
-            result = loop.run_until_complete(crawl_and_save(search_term, update_progress))
+            # Streamlit에서는 이미 이벤트 루프가 존재할 수 있습니다. 기존 루프가 실행 중이면
+            # asyncio.run()을 사용할 수 없으므로 예외를 감지하여 적절히 처리합니다.
+            try:
+                # 가장 간단한 실행: asyncio.run()은 루프를 생성하고 종료까지 관리합니다.
+                result = asyncio.run(crawl_and_save(search_term, update_progress))
+            except RuntimeError:
+                # 이미 실행 중인 이벤트 루프가 있는 경우 새 루프를 생성해 실행합니다.
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    result = loop.run_until_complete(crawl_and_save(search_term, update_progress))
+                finally:
+                    # 명시적으로 루프를 닫아 자원 해제
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
             # 완료 후 진행률 100% 설정
             progress_bar.progress(100)
             status_text.empty()
-            
+
             if "완료" in result:
                 st.success(result)
                 
@@ -427,11 +441,16 @@ def main():
             else:
                 st.error(result)
         except Exception as e:
+            # 예외 처리: 전역 오류 메시지를 사용자에게 표시합니다.
             st.error(f"예기치 못한 오류가 발생했습니다: {str(e)}")
         finally:
             # 진행률 컴포넌트 정리
-            progress_bar.empty()
-            status_text.empty()
+            try:
+                progress_bar.empty()
+                status_text.empty()
+            except Exception:
+                # 이미 정리되었거나 존재하지 않으면 무시합니다.
+                pass
     
     # 기존 파일이 있는 경우 다운로드 제공
     if os.path.exists("g2b_result.xlsx"):
