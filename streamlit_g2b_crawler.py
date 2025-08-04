@@ -1,6 +1,8 @@
 import asyncio
 import streamlit as st
 from playwright.async_api import async_playwright
+from playwright.sync_api import sync_playwright
+import time  # 동기 Playwright 버전에서 지연을 위해 사용
 import pandas as pd
 import os
 import openpyxl
@@ -8,7 +10,6 @@ from openpyxl.styles import Alignment
 import base64
 import subprocess
 import sys
-# 'time' 모듈은 현재 사용되지 않으므로 임포트를 제거했습니다.
 
 # Playwright 브라우저 설치 함수
 @st.cache_resource
@@ -302,6 +303,230 @@ async def crawl_and_save(search_term, progress_callback=None):
     
     return result_msg
 
+# -----------------------------------------------------------------------------
+# 동기 버전 크롤러 및 보조 함수들
+# -----------------------------------------------------------------------------
+def close_notice_popups_sync(page):
+    """
+    G2B 사이트에서 나타나는 팝업 창을 닫는 동기 Playwright 버전 함수입니다.
+    여러 종류의 팝업을 감지하여 닫고, "오늘 하루 보지 않기" 체크박스를 선택합니다.
+    """
+    try:
+        for _ in range(5):
+            popup_divs = page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+            for popup in popup_divs:
+                try:
+                    # 닫기 버튼 찾기
+                    for sel in ["button[class*='w2window_close']", "input[type='button'][value='닫기']"]:
+                        btn = popup.query_selector(sel)
+                        if btn:
+                            btn.click()
+                            time.sleep(0.2)
+                            break
+                    # "오늘 하루 보지 않기" 체크박스
+                    checkbox = popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
+                    if checkbox:
+                        checkbox.check()
+                        time.sleep(0.1)
+                        btn = popup.query_selector("input[type='button'][value='닫기']")
+                        if btn:
+                            btn.click()
+                            break
+                except Exception:
+                    continue
+            time.sleep(0.5)
+    except Exception as e:
+        print(f"팝업 닫기 중 오류: {e}")
+
+def wait_and_click_sync(page, selector: str, desc: str, timeout: int = 3000, scroll: bool = True) -> bool:
+    """
+    특정 셀렉터의 요소가 나타날 때까지 대기한 후 클릭하는 동기 함수입니다.
+    """
+    try:
+        page.wait_for_selector(selector, timeout=timeout, state="visible")
+        elem = page.query_selector(selector)
+        if elem and elem.is_visible():
+            if scroll:
+                elem.scroll_into_view_if_needed()
+                time.sleep(0.1)
+            elem.click()
+            return True
+        return False
+    except Exception as e:
+        print(f"{desc} 클릭 실패: {e}")
+        return False
+
+def crawl_and_save_sync(search_term: str, progress_callback=None) -> str:
+    """
+    G2B 사이트를 동기 Playwright API로 크롤링하여 데이터를 수집하고 저장합니다.
+    비동기 이벤트 루프 충돌을 피하기 위해 sync_playwright를 사용합니다.
+    """
+    result_msg = ""
+    browser = None
+    try:
+        if progress_callback:
+            progress_callback("브라우저 시작 중...")
+        with sync_playwright() as p:
+            # 브라우저 옵션 설정
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-extensions',
+                    '--no-first-run',
+                    '--disable-default-apps'
+                ]
+            )
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            )
+            page = context.new_page()
+
+            if progress_callback:
+                progress_callback("G2B 사이트 접속 중...")
+            # 사이트 접속
+            page.goto("https://shop.g2b.go.kr/", timeout=30000)
+            try:
+                page.wait_for_load_state('networkidle', timeout=10000)
+            except Exception:
+                pass
+            time.sleep(3)
+            if progress_callback:
+                progress_callback("팝업 닫는 중...")
+            # 팝업 닫기
+            close_notice_popups_sync(page)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+            if progress_callback:
+                progress_callback("제안공고목록 페이지로 이동 중...")
+            # 제안공고목록 버튼 클릭
+            btn_selectors = [
+                'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
+                'a[title*="제안공고목록"]',
+                'a:has-text("제안공고목록")',
+                '//a[contains(text(), "제안공고목록")]'
+            ]
+            clicked = False
+            for sel in btn_selectors:
+                if wait_and_click_sync(page, sel, "제안공고목록 버튼"):
+                    clicked = True
+                    break
+            if not clicked:
+                raise Exception("제안공고목록 버튼을 찾을 수 없습니다.")
+            time.sleep(2)
+            if progress_callback:
+                progress_callback("검색 조건 설정 중...")
+            # 3개월 라디오 버튼 선택
+            page.evaluate("""
+                const radio = document.querySelector('input[title="3개월"]');
+                if (radio) {
+                    radio.checked = true;
+                    const event = new Event('click', { bubbles: true });
+                    radio.dispatchEvent(event);
+                }
+            """)
+            time.sleep(1)
+            # 검색어 입력
+            input_elem = page.query_selector('td[data-title="제안공고명"] input[type="text"]')
+            if input_elem:
+                input_elem.fill(search_term)
+            else:
+                raise Exception("검색어 입력창을 찾을 수 없습니다.")
+            # 페이지당 레코드 수를 100으로 설정
+            page.evaluate("""
+                const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
+                selects.forEach(select => {
+                    select.value = "100";
+                    const event = new Event('change', { bubbles: true });
+                    select.dispatchEvent(event);
+                });
+            """)
+            time.sleep(1)
+            # 적용 버튼 클릭
+            if not wait_and_click_sync(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False):
+                print("적용 버튼을 찾을 수 없어 건너뜁니다.")
+            if progress_callback:
+                progress_callback("검색 실행 중...")
+            # 검색 버튼 클릭
+            if not wait_and_click_sync(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False):
+                raise Exception("검색 버튼을 찾을 수 없습니다.")
+            time.sleep(3)
+            if progress_callback:
+                progress_callback("데이터 수집 중...")
+            # 테이블 데이터 추출
+            table_elem = page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
+            if not table_elem:
+                raise Exception("데이터 테이블을 찾을 수 없습니다.")
+            rows = table_elem.query_selector_all('tr')
+            data = []
+            for row in rows:
+                tds = row.query_selector_all('td')
+                cols = []
+                for td in tds:
+                    try:
+                        nobr = td.query_selector('nobr')
+                        if nobr:
+                            text = nobr.inner_text()
+                        else:
+                            a_tag = td.query_selector('a')
+                            text = a_tag.inner_text() if a_tag else td.inner_text()
+                        cols.append(text.strip())
+                    except Exception:
+                        cols.append("")
+                if cols and any(col.strip() for col in cols):
+                    data.append(cols)
+            if not data:
+                return "⚠️ 검색 결과가 없습니다."
+            if progress_callback:
+                progress_callback("데이터 저장 중...")
+            # DataFrame 생성 및 병합
+            new_df = pd.DataFrame(data)
+            headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
+            new_df.columns = headers[:len(new_df.columns)]
+            new_df.insert(0, "검색어", search_term)
+            file_path = 'g2b_result.xlsx'
+            if os.path.exists(file_path):
+                try:
+                    old_df = pd.read_excel(file_path)
+                    combined_df = pd.concat([old_df, new_df], ignore_index=True)
+                    combined_df.drop_duplicates(subset="제안공고번호", keep='last', inplace=True)
+                    combined_df.reset_index(drop=True, inplace=True)
+                except Exception:
+                    combined_df = new_df
+            else:
+                combined_df = new_df
+            combined_df.to_excel(file_path, index=False)
+            # 엑셀 포맷팅
+            try:
+                wb = openpyxl.load_workbook(file_path)
+                ws = wb.active
+                align = Alignment(horizontal='center', vertical='center')
+                for row in ws.iter_rows():
+                    for cell in row:
+                        cell.alignment = align
+                col_widths = [15, 3.5, 17, 44, 55, 15, 17.5, 17, 17, 17]
+                for i, width in enumerate(col_widths[:ws.max_column], start=1):
+                    col_letter = openpyxl.utils.get_column_letter(i)
+                    ws.column_dimensions[col_letter].width = width
+                wb.save(file_path)
+            except Exception as e:
+                print(f"엑셀 포맷팅 중 오류: {e}")
+            result_msg = f"✅ 크롤링 완료: `{search_term}` 검색어로 {len(data)}건의 데이터를 수집하여 저장했습니다."
+    except Exception as e:
+        result_msg = f"❌ 오류 발생: {str(e)}"
+        print(f"크롤링 오류: {e}")
+    finally:
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+    return result_msg
+
 # 다운로드 버튼 생성 함수
 def create_download_link(file_path):
     """파일 다운로드 링크를 생성합니다."""
@@ -393,52 +618,37 @@ def main():
             elif "데이터 저장" in message:
                 progress_bar.progress(90)
 
-        # 크롤링 실행
+        # 크롤링 실행 (동기 버전 사용)
         try:
-            # 비동기 크롤러 실행
-            # Streamlit에서는 이미 이벤트 루프가 존재할 수 있습니다. 기존 루프가 실행 중이면
-            # asyncio.run()을 사용할 수 없으므로 예외를 감지하여 적절히 처리합니다.
-            try:
-                # 가장 간단한 실행: asyncio.run()은 루프를 생성하고 종료까지 관리합니다.
-                result = asyncio.run(crawl_and_save(search_term, update_progress))
-            except RuntimeError:
-                # 이미 실행 중인 이벤트 루프가 있는 경우 새 루프를 생성해 실행합니다.
-                loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(loop)
-                    result = loop.run_until_complete(crawl_and_save(search_term, update_progress))
-                finally:
-                    # 명시적으로 루프를 닫아 자원 해제
-                    try:
-                        loop.close()
-                    except Exception:
-                        pass
+            # 동기 크롤러 실행. 비동기 이벤트 루프 충돌을 방지하기 위해 sync_playwright 기반 함수를 사용합니다.
+            result = crawl_and_save_sync(search_term, update_progress)
             # 완료 후 진행률 100% 설정
             progress_bar.progress(100)
             status_text.empty()
 
             if "완료" in result:
                 st.success(result)
-                
+
                 # 결과 파일이 존재하는지 확인
                 if os.path.exists("g2b_result.xlsx"):
                     st.markdown("---")
                     st.subheader("📥 결과 다운로드")
-                    
+
                     # 파일 정보 표시
                     try:
                         df = pd.read_excel("g2b_result.xlsx")
                         st.info(f"총 {len(df)}건의 데이터가 저장되었습니다.")
-                        
+
                         # 미리보기
                         with st.expander("📋 데이터 미리보기 (최근 5건)"):
                             st.dataframe(df.head(), use_container_width=True)
                     except Exception as e:
                         st.warning(f"파일 정보를 읽는 중 오류: {e}")
-                    
+
                     # 다운로드 버튼
                     create_download_link("g2b_result.xlsx")
             else:
+                # result에 "완료"가 포함되지 않으면 오류 메시지로 간주합니다.
                 st.error(result)
         except Exception as e:
             # 예외 처리: 전역 오류 메시지를 사용자에게 표시합니다.
