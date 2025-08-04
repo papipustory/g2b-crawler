@@ -417,7 +417,25 @@ def crawl_and_save_sync(search_term: str, progress_callback=None) -> str:
                     clicked = True
                     break
             if not clicked:
-                raise Exception("제안공고목록 버튼을 찾을 수 없습니다.")
+                # 지정한 셀렉터에서 찾지 못한 경우, 모든 <a> 태그를 순회하며 공고 메뉴를 찾습니다.
+                all_links = page.query_selector_all("a")
+                for a in all_links:
+                    try:
+                        title_attr = a.get_attribute("title")
+                        href_attr = a.get_attribute("href")
+                        inner_text = a.inner_text()
+                        if ((title_attr and "제안공고" in title_attr) or (inner_text and "제안공고" in inner_text)):
+                            # href가 정상적인 링크인지 확인 후 클릭
+                            if href_attr and href_attr.strip() != "javascript:void(null)":
+                                a.scroll_into_view_if_needed()
+                                time.sleep(0.2)
+                                a.click()
+                                clicked = True
+                                break
+                    except Exception:
+                        continue
+                if not clicked:
+                    raise Exception("제안공고목록 버튼을 찾을 수 없습니다.")
             time.sleep(2)
             if progress_callback:
                 progress_callback("검색 조건 설정 중...")
