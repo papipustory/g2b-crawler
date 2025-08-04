@@ -151,13 +151,29 @@ async def main():
         
         async with async_playwright() as p:
             debug_log("Playwright 컨텍스트 생성...")
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context()
+            # Streamlit Cloud 환경에 최적화된 브라우저 설정
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor'
+                ]
+            )
+            context = await browser.new_context(
+                viewport={'width': 1280, 'height': 720},
+                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            )
             page = await context.new_page()
             
             debug_log("나라장터 페이지 접속...")
-            await page.goto("https://shop.g2b.go.kr/", timeout=3000)
-            await page.wait_for_load_state('networkidle', timeout=5000)
+            # 타임아웃 증가 (3초 → 30초)
+            await page.goto("https://shop.g2b.go.kr/", timeout=30000)
+            # 로딩 상태 대기 타임아웃도 증가 (5초 → 30초)
+            await page.wait_for_load_state('domcontentloaded', timeout=30000)
             await asyncio.sleep(3)
 
             await close_notice_popups(page)
