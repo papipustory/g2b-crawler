@@ -95,233 +95,7 @@ async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
         return False
 
 # 크롤링 함수
-async def crawl_and_save(search_term, progress_callback=None):
-    """G2B 사이트를 크롤링하여 데이터를 수집합니다."""
-    result_msg = ""
-    browser = None
-    
-    try:
-        if progress_callback:
-            progress_callback("브라우저 시작 중...")
-            
-        async with async_playwright() as p:
-            # 브라우저 옵션 설정
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-extensions',
-                    '--no-first-run',
-                    '--disable-default-apps'
-                ]
-            )
-            
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            )
-            
-            page = await context.new_page()
-            
-            if progress_callback:
-                progress_callback("G2B 사이트 접속 중...")
-            
-            # G2B 사이트 접속
-            await page.goto("https://shop.g2b.go.kr/", timeout=30000)
-            await page.wait_for_load_state('networkidle', timeout=10000)
-            await asyncio.sleep(3)
-
-            if progress_callback:
-                progress_callback("팝업 닫는 중...")
-            
-            # 팝업 닫기
-            await close_notice_popups(page)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(1)
-
-            if progress_callback:
-                progress_callback("제안공고목록 페이지로 이동 중...")
-            
-            # 제안공고목록 버튼 클릭을 시도합니다. 여러 셀렉터를 순차적으로 사용한 후,
-            # 찾지 못하면 페이지 내의 모든 링크를 순회하면서 대체 버튼을 찾습니다.
-            btn_selectors = [
-                'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
-                'a[title*="제안공고목록"]',
-                'text=제안공고목록',
-                'a:has-text("제안공고목록")',
-                '//a[contains(text(), "제안공고목록")]',
-                'div.w2textbox:text("제안공고목록")'
-            ]
-
-            clicked = False
-            for sel in btn_selectors:
-                if await wait_and_click(page, sel, "제안공고목록 버튼"):
-                    clicked = True
-                    break
-
-            if not clicked:
-                # 모든 <a> 태그를 순회하며 '제안공고' 관련 링크를 찾습니다.
-                all_links = await page.query_selector_all("a")
-                for a_elem in all_links:
-                    try:
-                        title_attr = await a_elem.get_attribute("title")
-                        href_attr = await a_elem.get_attribute("href")
-                        inner = await a_elem.inner_text()
-                        if ((title_attr and "제안공고" in title_attr) or (inner and "제안공고" in inner)):
-                            if href_attr and href_attr.strip() != "javascript:void(null)":
-                                await a_elem.scroll_into_view_if_needed()
-                                await asyncio.sleep(0.2)
-                                await a_elem.click()
-                                clicked = True
-                                break
-                    except Exception:
-                        continue
-                if not clicked:
-                    raise Exception("제안공고목록 버튼을 찾을 수 없습니다.")
-
-            await asyncio.sleep(2)
-
-            if progress_callback:
-                progress_callback("검색 조건 설정 중...")
-            
-            # 3개월 라디오 버튼 선택
-            await page.evaluate("""
-                const radio = document.querySelector('input[title="3개월"]');
-                if (radio) {
-                    radio.checked = true;
-                    const event = new Event('click', { bubbles: true });
-                    radio.dispatchEvent(event);
-                }
-            """)
-            await asyncio.sleep(1)
-
-            # 검색어 입력
-            input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
-            if input_elem:
-                await input_elem.fill(search_term, timeout=5000)
-            else:
-                raise Exception("검색어 입력창을 찾을 수 없습니다.")
-
-            # 페이지당 레코드 수를 100으로 설정
-            await page.evaluate("""
-                const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
-                selects.forEach(select => {
-                    select.value = "100";
-                    const event = new Event('change', { bubbles: true });
-                    select.dispatchEvent(event);
-                });
-            """)
-            await asyncio.sleep(1)
-
-            # 적용 버튼 클릭
-            if not await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False):
-                print("적용 버튼을 찾을 수 없어 건너뜁니다.")
-
-            if progress_callback:
-                progress_callback("검색 실행 중...")
-            
-            # 검색 버튼 클릭
-            if not await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False):
-                raise Exception("검색 버튼을 찾을 수 없습니다.")
-            
-            await asyncio.sleep(3)
-
-            if progress_callback:
-                progress_callback("데이터 수집 중...")
-            
-            # 테이블 데이터 추출
-            table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
-            if not table_elem:
-                raise Exception("데이터 테이블을 찾을 수 없습니다.")
-
-            rows = await table_elem.query_selector_all('tr')
-            data = []
-            
-            for row in rows:
-                tds = await row.query_selector_all('td')
-                cols = []
-                for td in tds:
-                    try:
-                        # nobr 태그 내용 우선 확인
-                        nobr = await td.query_selector('nobr')
-                        if nobr:
-                            text = await nobr.inner_text()
-                        else:
-                            # a 태그 내용 확인
-                            a = await td.query_selector('a')
-                            text = await a.inner_text() if a else await td.inner_text()
-                        cols.append(text.strip())
-                    except Exception:
-                        cols.append("")
-                
-                if cols and any(col.strip() for col in cols):
-                    data.append(cols)
-
-            if not data:
-                return "⚠️ 검색 결과가 없습니다."
-
-            if progress_callback:
-                progress_callback("데이터 저장 중...")
-            
-            # DataFrame 생성
-            new_df = pd.DataFrame(data)
-            headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
-            new_df.columns = headers[:len(new_df.columns)]
-            new_df.insert(0, "검색어", search_term)
-
-            # 파일 저장
-            file_path = 'g2b_result.xlsx'
-            if os.path.exists(file_path):
-                try:
-                    old_df = pd.read_excel(file_path)
-                    combined_df = pd.concat([old_df, new_df], ignore_index=True)
-                    combined_df.drop_duplicates(subset="제안공고번호", keep='last', inplace=True)
-                    combined_df.reset_index(drop=True, inplace=True)
-                except Exception:
-                    combined_df = new_df
-            else:
-                combined_df = new_df
-
-            # 엑셀 파일 저장 및 포맷팅
-            combined_df.to_excel(file_path, index=False)
-
-            # 엑셀 파일 포맷팅
-            try:
-                wb = openpyxl.load_workbook(file_path)
-                ws = wb.active
-                align = Alignment(horizontal='center', vertical='center')
-                
-                for row in ws.iter_rows():
-                    for cell in row:
-                        cell.alignment = align
-                
-                # 컬럼 너비 설정
-                col_widths = [15, 3.5, 17, 44, 55, 15, 17.5, 17, 17, 17]
-                for i, width in enumerate(col_widths[:ws.max_column], start=1):
-                    col_letter = openpyxl.utils.get_column_letter(i)
-                    ws.column_dimensions[col_letter].width = width
-                
-                wb.save(file_path)
-            except Exception as e:
-                print(f"엑셀 포맷팅 중 오류: {e}")
-
-            result_msg = f"✅ 크롤링 완료: `{search_term}` 검색어로 {len(data)}건의 데이터를 수집하여 저장했습니다."
-
-    except Exception as e:
-        result_msg = f"❌ 오류 발생: {str(e)}"
-        print(f"크롤링 오류: {e}")
-    
-    finally:
-        if browser:
-            try:
-                await browser.close()
-            except Exception:
-                pass
-    
-    return result_msg
+# 비동기 버전 크롤러는 사용하지 않습니다. 필요 시 참고용으로 남겨 둡니다.
 
 # -----------------------------------------------------------------------------
 # 동기 버전 크롤러 및 보조 함수들
@@ -657,22 +431,10 @@ def main():
             elif "데이터 저장" in message:
                 progress_bar.progress(90)
 
-        # 크롤링 실행 (비동기 버전 사용)
+        # 크롤링 실행 (동기 버전 사용)
         try:
-            # 비동기 크롤러 실행. Streamlit에서는 이미 이벤트 루프가 실행 중일 수 있으므로
-            # asyncio.run()을 시도하고 실패하면 새 이벤트 루프를 생성하여 실행합니다.
-            try:
-                result = asyncio.run(crawl_and_save(search_term, update_progress))
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(loop)
-                    result = loop.run_until_complete(crawl_and_save(search_term, update_progress))
-                finally:
-                    try:
-                        loop.close()
-                    except Exception:
-                        pass
+            # 동기 크롤러 실행. 비동기 이벤트 루프와 충돌하지 않도록 sync_playwright 기반 함수를 사용합니다.
+            result = crawl_and_save_sync(search_term, update_progress)
             # 완료 후 진행률 100% 설정
             progress_bar.progress(100)
             status_text.empty()
@@ -699,8 +461,10 @@ def main():
                     # 다운로드 버튼
                     create_download_link("g2b_result.xlsx")
             else:
+                # 크롤링이 실패한 경우 메시지 출력
                 st.error(result)
         except Exception as e:
+            # 예외 처리: 전역 오류 메시지를 사용자에게 표시합니다.
             st.error(f"예기치 못한 오류가 발생했습니다: {str(e)}")
         finally:
             # 진행률 컴포넌트 정리
@@ -708,6 +472,7 @@ def main():
                 progress_bar.empty()
                 status_text.empty()
             except Exception:
+                # 이미 정리되었거나 존재하지 않으면 무시합니다.
                 pass
     
     # 기존 파일이 있는 경우 다운로드 제공
