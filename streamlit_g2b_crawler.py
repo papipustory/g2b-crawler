@@ -278,5 +278,25 @@ async def main():
         if browser:
             await browser.close()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if st.button("크롤링 시작"):
+    # Playwright 설치 확인
+    if not ensure_playwright_installed():
+        st.stop()
+    st.info("크롤링을 시작합니다. 잠시만 기다려 주세요... (1-2분 소요)")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    # 별도 스레드에서 크롤링 실행
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            status_text.text("브라우저 시작 중...")
+            progress_bar.progress(10)
+            future = executor.submit(lambda: asyncio.run(main()))
+            # ... (진행상황 표시 등)
+            result = future.result(timeout=180)
+            # ... (결과 표시)
+        except Exception as e:
+            st.error(f"❌ 실행 중 오류: {str(e)}")
+        finally:
+            progress_bar.empty()
+            status_text.empty()
