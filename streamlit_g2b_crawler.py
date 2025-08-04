@@ -5,10 +5,43 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Alignment
 import os
+import sys
 
 st.set_page_config(page_title="나라장터 제안공고 크롤러", layout="centered")
 
 st.title("💻 나라장터 제안공고 크롤링")
+
+# Streamlit Cloud에서 asyncio 이벤트 루프 처리
+def run_async_code():
+    try:
+        # 기존 이벤트 루프가 있는지 확인
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # 이미 실행 중인 루프가 있다면 새 스레드에서 실행
+            import threading
+            import concurrent.futures
+            
+            def run_in_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(main())
+                finally:
+                    new_loop.close()
+            
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                return future.result()
+        else:
+            return asyncio.run(main())
+    except RuntimeError:
+        # 새로운 이벤트 루프 생성
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(main())
+        finally:
+            loop.close()
 
 if st.button("크롤링 시작"):
     st.info("크롤링을 시작합니다. 잠시만 기다려 주세요...")
@@ -41,11 +74,26 @@ if st.button("크롤링 시작"):
         browser = None
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)  # 명확히 chromium 사용
+                # Streamlit Cloud에서 브라우저 실행 옵션 추가
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-first-run',
+                        '--no-zygote',
+                        '--single-process',
+                        '--disable-gpu'
+                    ]
+                )
                 context = await browser.new_context()
                 page = await context.new_page()
-                await page.goto("https://shop.g2b.go.kr/", timeout=10000)
-                await page.wait_for_load_state('networkidle')
+                
+                # 타임아웃 증가
+                await page.goto("https://shop.g2b.go.kr/", timeout=30000)
+                await page.wait_for_load_state('networkidle', timeout=30000)
                 await asyncio.sleep(2)
 
                 await close_notice_popups(page)
@@ -138,7 +186,8 @@ if st.button("크롤링 시작"):
                             new_df = new_df.iloc[:, :len(headers)]
                         new_df.columns = headers
 
-                        file_path = 'g2b_result.xlsx'
+                        # Streamlit Cloud에서는 임시 디렉토리 사용
+                        file_path = '/tmp/g2b_result.xlsx'
                         if os.path.exists(file_path):
                             old_df = pd.read_excel(file_path)
                             combined_df = pd.concat([old_df, new_df])
@@ -160,15 +209,28 @@ if st.button("크롤링 시작"):
                             ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
                         wb.save(file_path)
 
-                        st.success("✅ 크롤링 완료! 'g2b_result.xlsx' 파일이 저장되었습니다.")
+                        # 다운로드 버튼 제공
+                        with open(file_path, 'rb') as f:
+                            st.download_button(
+                                label="📥 결과 파일 다운로드",
+                                data=f.read(),
+                                file_name="g2b_result.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        
+                        st.success("✅ 크롤링 완료!")
+                        st.dataframe(combined_df.head(10))  # 미리보기 제공
                     else:
                         st.warning("📭 공고 목록을 찾을 수 없습니다.")
 
         except Exception as e:
-            st.error(f"❌ 오류 발생: {e}")
+            st.error(f"❌ 오류 발생: {str(e)}")
+            import traceback
+            st.error(f"상세 오류: {traceback.format_exc()}")
 
         finally:
             if browser:
                 await browser.close()
 
-    asyncio.run(main())
+    # asyncio 실행
+    run_async_code()
