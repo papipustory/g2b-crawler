@@ -78,7 +78,7 @@ async def close_notice_popups(page):
         print(f"팝업 닫기 중 오류: {e}")
 
 # 버튼 대기 및 클릭 함수
-async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
+async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
     """요소를 기다리고 클릭합니다."""
     try:
         await page.wait_for_selector(selector, timeout=timeout, state="visible")
@@ -145,22 +145,42 @@ async def crawl_and_save(search_term, progress_callback=None):
             if progress_callback:
                 progress_callback("제안공고목록 페이지로 이동 중...")
             
-            # 제안공고목록 버튼 클릭
+            # 제안공고목록 버튼 클릭을 시도합니다. 여러 셀렉터를 순차적으로 사용한 후,
+            # 찾지 못하면 페이지 내의 모든 링크를 순회하면서 대체 버튼을 찾습니다.
             btn_selectors = [
                 'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
                 'a[title*="제안공고목록"]',
+                'text=제안공고목록',
                 'a:has-text("제안공고목록")',
-                '//a[contains(text(), "제안공고목록")]'
+                '//a[contains(text(), "제안공고목록")]',
+                'div.w2textbox:text("제안공고목록")'
             ]
-            
+
             clicked = False
             for sel in btn_selectors:
                 if await wait_and_click(page, sel, "제안공고목록 버튼"):
                     clicked = True
                     break
-            
+
             if not clicked:
-                raise Exception("제안공고목록 버튼을 찾을 수 없습니다.")
+                # 모든 <a> 태그를 순회하며 '제안공고' 관련 링크를 찾습니다.
+                all_links = await page.query_selector_all("a")
+                for a_elem in all_links:
+                    try:
+                        title_attr = await a_elem.get_attribute("title")
+                        href_attr = await a_elem.get_attribute("href")
+                        inner = await a_elem.inner_text()
+                        if ((title_attr and "제안공고" in title_attr) or (inner and "제안공고" in inner)):
+                            if href_attr and href_attr.strip() != "javascript:void(null)":
+                                await a_elem.scroll_into_view_if_needed()
+                                await asyncio.sleep(0.2)
+                                await a_elem.click()
+                                clicked = True
+                                break
+                    except Exception:
+                        continue
+                if not clicked:
+                    raise Exception("제안공고목록 버튼을 찾을 수 없습니다.")
 
             await asyncio.sleep(2)
 
@@ -637,10 +657,22 @@ def main():
             elif "데이터 저장" in message:
                 progress_bar.progress(90)
 
-        # 크롤링 실행 (동기 버전 사용)
+        # 크롤링 실행 (비동기 버전 사용)
         try:
-            # 동기 크롤러 실행. 비동기 이벤트 루프 충돌을 방지하기 위해 sync_playwright 기반 함수를 사용합니다.
-            result = crawl_and_save_sync(search_term, update_progress)
+            # 비동기 크롤러 실행. Streamlit에서는 이미 이벤트 루프가 실행 중일 수 있으므로
+            # asyncio.run()을 시도하고 실패하면 새 이벤트 루프를 생성하여 실행합니다.
+            try:
+                result = asyncio.run(crawl_and_save(search_term, update_progress))
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    result = loop.run_until_complete(crawl_and_save(search_term, update_progress))
+                finally:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
             # 완료 후 진행률 100% 설정
             progress_bar.progress(100)
             status_text.empty()
@@ -667,10 +699,8 @@ def main():
                     # 다운로드 버튼
                     create_download_link("g2b_result.xlsx")
             else:
-                # result에 "완료"가 포함되지 않으면 오류 메시지로 간주합니다.
                 st.error(result)
         except Exception as e:
-            # 예외 처리: 전역 오류 메시지를 사용자에게 표시합니다.
             st.error(f"예기치 못한 오류가 발생했습니다: {str(e)}")
         finally:
             # 진행률 컴포넌트 정리
@@ -678,7 +708,6 @@ def main():
                 progress_bar.empty()
                 status_text.empty()
             except Exception:
-                # 이미 정리되었거나 존재하지 않으면 무시합니다.
                 pass
     
     # 기존 파일이 있는 경우 다운로드 제공
