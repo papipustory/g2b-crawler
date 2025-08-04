@@ -1,4 +1,4 @@
 #!/bin/bash
-# playwright 브라우저 강제 설치
-playwright install chromium
-python -m playwright install --with-deps
+# Streamlit Cloud 환경을 위한 Playwright 설정
+export PLAYWRIGHT_BROWSERS_PATH=/tmp
+playwright install chromium --with-deps
