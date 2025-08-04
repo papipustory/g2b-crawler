@@ -50,7 +50,6 @@ def ensure_playwright_installed():
         return False
 
 async def close_notice_popups(page):
-    """원본 코드 기반의 안정적인 팝업 닫기"""
     for _ in range(5):
         popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
         closed = False
