@@ -30,7 +30,7 @@ def ensure_playwright_installed():
 def run_crawler():
     """별도 스레드에서 크롤러 실행"""
     
-    async def wait_and_click(page, selector, name, timeout=3000, scroll=True):
+    async def wait_and_click(page, selector, name, timeout=5000, scroll=True):
         try:
             if scroll:
                 await page.evaluate(f'''
@@ -42,6 +42,45 @@ def run_crawler():
             return True
         except Exception:
             print(f"[실패] {name} 클릭 실패: selector {selector}")
+            return False
+
+    async def find_and_click_by_text(page, text, element_type="a"):
+        """텍스트로 요소를 찾아서 클릭"""
+        try:
+            # 다양한 방법으로 텍스트 검색
+            selectors = [
+                f'{element_type}:has-text("{text}")',
+                f'{element_type}[title*="{text}"]',
+                f'{element_type}[alt*="{text}"]',
+                f'//{element_type}[contains(text(), "{text}")]',
+                f'//{element_type}[contains(@title, "{text}")]'
+            ]
+            
+            for selector in selectors:
+                try:
+                    if selector.startswith('//'):
+                        # XPath 사용
+                        elements = await page.query_selector_all(f'xpath={selector}')
+                    else:
+                        elements = await page.query_selector_all(selector)
+                    
+                    for element in elements:
+                        try:
+                            await element.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.5)
+                            await element.click()
+                            print(f"성공: '{text}' 텍스트로 클릭")
+                            return True
+                        except Exception as e:
+                            print(f"클릭 실패: {e}")
+                            continue
+                except Exception as e:
+                    print(f"셀렉터 실패 {selector}: {e}")
+                    continue
+            
+            return False
+        except Exception as e:
+            print(f"텍스트 검색 실패: {e}")
             return False
 
     async def close_notice_popups(page):
@@ -72,7 +111,10 @@ def run_crawler():
                     '--single-process',
                     '--disable-gpu',
                     '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor'
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding'
                 ]
                 
                 browser = await p.chromium.launch(
@@ -89,65 +131,88 @@ def run_crawler():
                 
                 # 타임아웃 증가
                 await page.goto("https://shop.g2b.go.kr/", timeout=60000)
-                await page.wait_for_load_state('networkidle', timeout=60000)
+                await page.wait_for_load_state('domcontentloaded', timeout=60000)
                 await asyncio.sleep(3)
 
                 await close_notice_popups(page)
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(2)
 
-                # 제안공고목록 버튼 찾기
-                btn_selectors = [
-                    'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
-                    'a[title*="제안공고목록"]',
-                    'a:has-text("제안공고목록")',
-                    '//a[contains(text(), "제안공고목록")]',
-                    'div.w2textbox:text("제안공고목록")',
-                ]
+                # 제안공고목록 버튼 찾기 - 텍스트 기반 검색 우선
+                print("제안공고목록 버튼 검색 시작...")
                 
-                clicked = False
-                for sel in btn_selectors:
-                    if await wait_and_click(page, sel, "제안공고목록 버튼"):
-                        clicked = True
-                        break
-                
-                if not clicked:
-                    all_a = await page.query_selector_all("a")
-                    for a in all_a:
-                        try:
-                            title = await a.get_attribute("title")
-                            href = await a.get_attribute("href")
-                            inner = await a.inner_text()
-                            if (title and "제안공고" in title) or (inner and "제안공고" in inner):
-                                if href and href.strip() != "javascript:void(null)":
-                                    await a.scroll_into_view_if_needed()
-                                    await asyncio.sleep(0.5)
-                                    await a.click()
-                                    clicked = True
-                                    break
-                        except:
-                            continue
-                
-                if not clicked:
-                    return {"error": "제안공고목록 버튼을 찾을 수 없습니다."}
+                # 1. 텍스트 기반 검색 시도
+                if await find_and_click_by_text(page, "제안공고목록", "a"):
+                    print("텍스트 기반 검색으로 제안공고목록 버튼 클릭 성공")
+                else:
+                    # 2. 기존 셀렉터 기반 검색
+                    btn_selectors = [
+                        'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
+                        'a[title*="제안공고목록"]',
+                        'a:has-text("제안공고목록")',
+                        '//a[contains(text(), "제안공고목록")]',
+                        'div.w2textbox:text("제안공고목록")',
+                    ]
+                    
+                    clicked = False
+                    for sel in btn_selectors:
+                        if await wait_and_click(page, sel, "제안공고목록 버튼"):
+                            clicked = True
+                            break
+                    
+                    if not clicked:
+                        # 3. 모든 링크 검색
+                        all_a = await page.query_selector_all("a")
+                        for a in all_a:
+                            try:
+                                title = await a.get_attribute("title")
+                                href = await a.get_attribute("href")
+                                inner = await a.inner_text()
+                                if (title and "제안공고" in title) or (inner and "제안공고" in inner):
+                                    if href and href.strip() != "javascript:void(null)":
+                                        await a.scroll_into_view_if_needed()
+                                        await asyncio.sleep(0.5)
+                                        await a.click()
+                                        clicked = True
+                                        break
+                            except:
+                                continue
+                    
+                    if not clicked:
+                        return {"error": "제안공고목록 버튼을 찾을 수 없습니다."}
 
                 await asyncio.sleep(2)
 
-                # 3개월 라디오 버튼 선택
-                await page.evaluate("""
-                    const radio = document.querySelector('input[title="3개월"]');
-                    if (radio) {
-                        radio.checked = true;
-                        const event = new Event('click', { bubbles: true });
-                        radio.dispatchEvent(event);
-                    }
-                """)
+                # 3개월 라디오 버튼 선택 - 텍스트 기반 검색
+                print("3개월 라디오 버튼 검색...")
+                if not await find_and_click_by_text(page, "3개월", "input"):
+                    # 기존 방법으로 시도
+                    await page.evaluate("""
+                        const radio = document.querySelector('input[title="3개월"]');
+                        if (radio) {
+                            radio.checked = true;
+                            const event = new Event('click', { bubbles: true });
+                            radio.dispatchEvent(event);
+                        }
+                    """)
                 await asyncio.sleep(1)
 
                 # 검색어 입력
+                print("검색어 입력...")
                 input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
                 if input_elem:
                     await input_elem.fill('컴퓨터')
+                else:
+                    # 대안: 모든 input 요소 중에서 찾기
+                    inputs = await page.query_selector_all('input[type="text"]')
+                    for inp in inputs:
+                        try:
+                            placeholder = await inp.get_attribute('placeholder')
+                            if placeholder and '공고명' in placeholder:
+                                await inp.fill('컴퓨터')
+                                break
+                        except:
+                            continue
 
                 # 페이지당 표시 개수 설정
                 await page.evaluate("""
@@ -160,13 +225,21 @@ def run_crawler():
                 """)
                 await asyncio.sleep(1)
 
-                # 적용 및 검색 버튼 클릭
-                await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
+                # 적용 및 검색 버튼 클릭 - 텍스트 기반 검색
+                print("적용 버튼 클릭...")
+                if not await find_and_click_by_text(page, "적용", "input"):
+                    await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
+                
                 await asyncio.sleep(1)
-                await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
+                
+                print("검색 버튼 클릭...")
+                if not await find_and_click_by_text(page, "검색", "input"):
+                    await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
+                
                 await asyncio.sleep(3)
 
                 # 테이블 데이터 추출
+                print("테이블 데이터 추출...")
                 table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
                 if table_elem:
                     rows = await table_elem.query_selector_all('tr')
@@ -238,7 +311,10 @@ def run_crawler():
 
         finally:
             if browser:
-                await browser.close()
+                try:
+                    await browser.close()
+                except:
+                    pass
 
     # 새로운 이벤트 루프에서 실행
     def run_in_new_loop():
@@ -246,8 +322,13 @@ def run_crawler():
         asyncio.set_event_loop(loop)
         try:
             return loop.run_until_complete(main())
+        except Exception as e:
+            return {"error": f"이벤트 루프 오류: {str(e)}"}
         finally:
-            loop.close()
+            try:
+                loop.close()
+            except:
+                pass
     
     return run_in_new_loop()
 
