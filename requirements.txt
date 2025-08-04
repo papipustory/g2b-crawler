@@ -1,5 +1,6 @@
-playwright
+playwright==1.39.0
 streamlit
 pandas
 openpyxl
+
 
