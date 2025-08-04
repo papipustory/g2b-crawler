@@ -182,8 +182,10 @@ async def main():
             await asyncio.sleep(3)
 
             await close_notice_popups(page)
+            await asyncio.sleep(1) # 팝업 닫기 후 대기
+
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(1)
+            await asyncio.sleep(1) # 스크롤 후 대기
 
             # 제안공고목록 버튼 찾기 - 원본 코드 방식
             debug_log("제안공고목록 버튼 검색 시작...")
@@ -200,6 +202,7 @@ async def main():
                 if await wait_and_click(page, sel, "제안공고목록 버튼"):
                     clicked = True
                     break
+            await asyncio.sleep(0.5) # 버튼 클릭 후 대기
             
             if not clicked:
                 debug_log("셀렉터 기반 검색 실패, 모든 링크 검색 시도...")
