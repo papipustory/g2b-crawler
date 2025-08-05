@@ -1,8 +1,9 @@
 streamlit
 pandas
-playwright>=1.40.0
+python -m playwright install chromium
 openpyxl
 pyee>=11.0.1
 greenlet>=3.0.1
 typing-extensions>=4.0.0
 nest_asyncio
+
