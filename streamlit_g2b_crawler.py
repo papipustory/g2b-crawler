@@ -56,7 +56,7 @@ async def close_notice_popups(page):
 # ===============================
 # 요소 대기 후 클릭
 # ===============================
-async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
+async def wait_and_click(page, selector, desc, timeout=30000, scroll=True):  # 타임아웃 증가
     try:
         await page.wait_for_selector(selector, timeout=timeout, state="visible")
         elem = await page.query_selector(selector)
@@ -69,8 +69,8 @@ async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
             return True
         print(f"[DEBUG] {desc} 클릭 실패(안보임)")
         return False
-    except:
-        print(f"[DEBUG] {desc} 클릭 실패(예외)")
+    except Exception as e:
+        print(f"[DEBUG] {desc} 클릭 실패(예외: {e})")
         return False
 
 # ===============================
@@ -84,23 +84,32 @@ async def main():
             print("[DEBUG] Playwright 초기화 완료")
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer"]
+                args=[
+                    "--no-sandbox", 
+                    "--disable-dev-shm-usage", 
+                    "--disable-software-rasterizer",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-web-security"
+                ]
             )
-            context = await browser.new_context()
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            )
             page = await context.new_page()
 
             # 사이트 접속
             print("[DEBUG] 나라장터 접속 시도")
-            await page.goto("https://shop.g2b.go.kr/", timeout=10000)
-            await page.wait_for_load_state('networkidle', timeout=10000)
-            await asyncio.sleep(3)
+            await page.goto("https://shop.g2b.go.kr/", timeout=30000)  # 타임아웃 증가
+            await page.wait_for_load_state('networkidle', timeout=30000)
+            await asyncio.sleep(5)  # 대기 시간 증가
 
             # 팝업 닫기
             await close_notice_popups(page)
 
             # 스크롤
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
             # 제안공고목록 클릭
             btn_selectors = [
@@ -110,11 +119,18 @@ async def main():
                 '//a[contains(text(), "제안공고목록")]',
                 'div.w2textbox:text("제안공고목록")',
             ]
+            
+            clicked = False
             for sel in btn_selectors:
                 if await wait_and_click(page, sel, "제안공고목록 버튼"):
+                    clicked = True
                     break
+            
+            if not clicked:
+                print("[ERROR] 제안공고목록 버튼을 찾을 수 없습니다.")
+                return
 
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(3)  # 대기 시간 증가
 
             # 조회 기간 3개월
             await page.evaluate("""
@@ -125,12 +141,13 @@ async def main():
                     radio.dispatchEvent(event);
                 }
             """)
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
             # 검색어 입력
             input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
             if input_elem:
-                await input_elem.fill('컴퓨터', timeout=1000)
+                await input_elem.fill('컴퓨터')
+                await asyncio.sleep(1)
 
             # 표시 건수 100건
             await page.evaluate("""
@@ -141,12 +158,13 @@ async def main():
                     select.dispatchEvent(event);
                 });
             """)
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
             # 적용 & 검색
             await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
+            await asyncio.sleep(1)
             await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(5)  # 검색 대기 시간 증가
 
             # 테이블 수집
             print("[DEBUG] 테이블 수집 시작")
@@ -203,11 +221,19 @@ async def main():
                     for i, width in enumerate(col_widths, start=1):
                         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
                     wb.save(file_path)
+                    
+                    print(f"[DEBUG] 엑셀 파일 저장 완료: {file_path}")
+                else:
+                    print("[WARNING] 수집된 데이터가 없습니다.")
+            else:
+                print("[ERROR] 테이블을 찾을 수 없습니다.")
 
             await asyncio.sleep(2)
 
     except Exception as e:
         print(f"[DEBUG] main() 오류: {e}")
+        import traceback
+        print(traceback.format_exc())
 
     finally:
         if browser:
