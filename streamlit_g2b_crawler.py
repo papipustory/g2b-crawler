@@ -6,13 +6,13 @@ import openpyxl
 from openpyxl.styles import Alignment
 from playwright.async_api import async_playwright
 
-# Streamlit 관련 임포트 제거 (UI는 app.py에서 처리)
 nest_asyncio.apply()
 
 # ===============================
-# 공지팝업 닫기 (iframe 포함, 최대 5회 반복)
+# 팝업 닫기 함수
 # ===============================
 async def close_notice_popups(page):
+    print("[DEBUG] close_notice_popups() 시작")
     try:
         for _ in range(5):
             closed_any = False
@@ -48,9 +48,9 @@ async def close_notice_popups(page):
 
             if not closed_any:
                 break
-
     except Exception as e:
-        print(f"[close_notice_popups] 팝업 닫기 오류: {e}")
+        print(f"[close_notice_popups] 오류: {e}")
+    print("[DEBUG] close_notice_popups() 종료")
 
 # ===============================
 # 요소 대기 후 클릭
@@ -64,18 +64,23 @@ async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
                 await elem.scroll_into_view_if_needed()
                 await asyncio.sleep(0.02)
             await elem.click()
+            print(f"[DEBUG] {desc} 클릭 성공")
             return True
+        print(f"[DEBUG] {desc} 클릭 실패(안보임)")
         return False
     except:
+        print(f"[DEBUG] {desc} 클릭 실패(예외)")
         return False
 
 # ===============================
 # 메인 크롤링 함수
 # ===============================
 async def main():
+    print("[DEBUG] main() 시작")
     browser = None
     try:
         async with async_playwright() as p:
+            print("[DEBUG] Playwright 초기화 완료")
             browser = await p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer"]
@@ -83,7 +88,8 @@ async def main():
             context = await browser.new_context()
             page = await context.new_page()
 
-            # 나라장터 접속
+            # 사이트 접속
+            print("[DEBUG] 나라장터 접속 시도")
             await page.goto("https://shop.g2b.go.kr/", timeout=10000)
             await page.wait_for_load_state('networkidle', timeout=10000)
             await asyncio.sleep(3)
@@ -91,11 +97,11 @@ async def main():
             # 팝업 닫기
             await close_notice_popups(page)
 
-            # 페이지 스크롤
+            # 스크롤
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(1)
 
-            # '제안공고목록' 클릭
+            # 제안공고목록 클릭
             btn_selectors = [
                 'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
                 'a[title*="제안공고목록"]',
@@ -142,6 +148,7 @@ async def main():
             await asyncio.sleep(0.8)
 
             # 테이블 수집
+            print("[DEBUG] 테이블 수집 시작")
             table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
             if table_elem:
                 rows = await table_elem.query_selector_all('tr')
@@ -199,8 +206,9 @@ async def main():
             await asyncio.sleep(2)
 
     except Exception as e:
-        print(f"Error occurred: {e}")
+        print(f"[DEBUG] main() 오류: {e}")
 
     finally:
         if browser:
             await browser.close()
+        print("[DEBUG] main() 종료")
