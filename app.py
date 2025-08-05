@@ -4,7 +4,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 import os
 
-# streamlit_g2b_crawler.py 의 main() 불러오기
+# 크롤러 main() 가져오기
 from streamlit_g2b_crawler import main as crawler_main
 
 # ===============================
@@ -14,7 +14,7 @@ st.set_page_config(page_title="나라장터 제안공고 크롤러", layout="cen
 st.title("💻 나라장터 제안공고 크롤러")
 st.caption("컴퓨터 관련 제안공고를 G2B에서 크롤링하여 다운로드합니다.")
 
-# 진행 표시 영역
+# 진행 상태 UI
 progress_bar = st.empty()
 status_text = st.empty()
 
@@ -23,13 +23,15 @@ status_text = st.empty()
 # ===============================
 def run_crawler_async():
     try:
-        asyncio.run(crawler_main())  # streamlit_g2b_crawler.py 의 main 실행
+        print("[DEBUG] run_crawler_async() 시작")
+        asyncio.run(crawler_main())
+        print("[DEBUG] run_crawler_async() 종료")
     except Exception:
         traceback.print_exc()
         raise
 
 # ===============================
-# 버튼 클릭 시 크롤링 시작
+# 버튼 클릭 이벤트
 # ===============================
 if st.button("📦 크롤링 시작"):
     st.info("Playwright 크롤링을 실행 중입니다. 잠시 기다려 주세요.")
