@@ -1,241 +1,205 @@
-import asyncio
-import nest_asyncio
+import time
 import pandas as pd
 import os
 import openpyxl
 from openpyxl.styles import Alignment
-from playwright.async_api import async_playwright
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 
-# Cloud에서 asyncio 중첩 허용
-nest_asyncio.apply()
-
-# ===============================
-# 팝업 닫기 함수
-# ===============================
-async def close_notice_popups(page):
-    print("[DEBUG] close_notice_popups() 시작")
+def main():
+    """Selenium을 사용한 크롤링"""
+    print("[DEBUG] Selenium 크롤링 시작")
+    
+    # Chrome 옵션 설정
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    driver = None
     try:
-        for _ in range(5):
-            closed_any = False
-
-            # 메인 페이지 팝업
-            popups = await page.query_selector_all("div[id*='_header'][title='공지팝업']")
+        # 드라이버 생성
+        driver = webdriver.Chrome(options=chrome_options)
+        wait = WebDriverWait(driver, 10)
+        
+        # 사이트 접속
+        print("[DEBUG] 나라장터 접속")
+        driver.get("https://shop.g2b.go.kr/")
+        time.sleep(3)
+        
+        # 팝업 닫기
+        try:
+            popups = driver.find_elements(By.CSS_SELECTOR, "button.w2window_close")
             for popup in popups:
-                try:
-                    close_btn = await popup.query_selector("button.w2window_close")
-                    if close_btn:
-                        await close_btn.click()
-                        closed_any = True
-                        await asyncio.sleep(0.2)
-                except:
-                    continue
-
-            # iframe 내부 팝업
-            frames = page.frames
-            for frame in frames:
-                try:
-                    popups_iframe = await frame.query_selector_all("div[id*='_header'][title='공지팝업']")
-                    for popup in popups_iframe:
-                        try:
-                            close_btn = await popup.query_selector("button.w2window_close")
-                            if close_btn:
-                                await close_btn.click()
-                                closed_any = True
-                                await asyncio.sleep(0.2)
-                        except:
-                            continue
-                except:
-                    continue
-
-            if not closed_any:
-                break
-    except Exception as e:
-        print(f"[close_notice_popups] 오류: {e}")
-    print("[DEBUG] close_notice_popups() 종료")
-
-# ===============================
-# 요소 대기 후 클릭
-# ===============================
-async def wait_and_click(page, selector, desc, timeout=30000, scroll=True):  # 타임아웃 증가
-    try:
-        await page.wait_for_selector(selector, timeout=timeout, state="visible")
-        elem = await page.query_selector(selector)
-        if elem and await elem.is_visible():
-            if scroll:
-                await elem.scroll_into_view_if_needed()
-                await asyncio.sleep(0.02)
-            await elem.click()
-            print(f"[DEBUG] {desc} 클릭 성공")
-            return True
-        print(f"[DEBUG] {desc} 클릭 실패(안보임)")
-        return False
-    except Exception as e:
-        print(f"[DEBUG] {desc} 클릭 실패(예외: {e})")
-        return False
-
-# ===============================
-# 메인 크롤링 함수
-# ===============================
-async def main():
-    print("[DEBUG] main() 시작")
-    browser = None
-    try:
-        async with async_playwright() as p:
-            print("[DEBUG] Playwright 초기화 완료")
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox", 
-                    "--disable-dev-shm-usage", 
-                    "--disable-software-rasterizer",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-web-security"
-                ]
-            )
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            )
-            page = await context.new_page()
-
-            # 사이트 접속
-            print("[DEBUG] 나라장터 접속 시도")
-            await page.goto("https://shop.g2b.go.kr/", timeout=30000)  # 타임아웃 증가
-            await page.wait_for_load_state('networkidle', timeout=30000)
-            await asyncio.sleep(5)  # 대기 시간 증가
-
-            # 팝업 닫기
-            await close_notice_popups(page)
-
-            # 스크롤
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(2)
-
-            # 제안공고목록 클릭
-            btn_selectors = [
-                'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
+                if popup.is_displayed():
+                    popup.click()
+                    time.sleep(0.5)
+        except:
+            pass
+        
+        # 제안공고목록 클릭
+        print("[DEBUG] 제안공고목록 검색")
+        try:
+            # 여러 선택자 시도
+            selectors = [
                 'a[title*="제안공고목록"]',
-                'a:has-text("제안공고목록")',
-                '//a[contains(text(), "제안공고목록")]',
-                'div.w2textbox:text("제안공고목록")',
+                'a:contains("제안공고목록")',
+                '//a[contains(text(), "제안공고목록")]'
             ]
             
             clicked = False
-            for sel in btn_selectors:
-                if await wait_and_click(page, sel, "제안공고목록 버튼"):
+            for selector in selectors:
+                try:
+                    if selector.startswith('//'):
+                        elem = driver.find_element(By.XPATH, selector)
+                    else:
+                        elem = driver.find_element(By.CSS_SELECTOR, selector)
+                    
+                    driver.execute_script("arguments[0].scrollIntoView();", elem)
+                    time.sleep(0.5)
+                    elem.click()
                     clicked = True
                     break
+                except:
+                    continue
             
             if not clicked:
-                print("[ERROR] 제안공고목록 버튼을 찾을 수 없습니다.")
+                print("[ERROR] 제안공고목록 버튼을 찾을 수 없습니다")
                 return
-
-            await asyncio.sleep(3)  # 대기 시간 증가
-
-            # 조회 기간 3개월
-            await page.evaluate("""
+                
+        except Exception as e:
+            print(f"[ERROR] 제안공고목록 클릭 실패: {e}")
+            return
+        
+        time.sleep(3)
+        
+        # 조회 기간 3개월 설정
+        try:
+            driver.execute_script("""
                 const radio = document.querySelector('input[title="3개월"]');
                 if (radio) {
                     radio.checked = true;
-                    const event = new Event('click', { bubbles: true });
-                    radio.dispatchEvent(event);
+                    radio.click();
                 }
             """)
-            await asyncio.sleep(2)
-
-            # 검색어 입력
-            input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
-            if input_elem:
-                await input_elem.fill('컴퓨터')
-                await asyncio.sleep(1)
-
-            # 표시 건수 100건
-            await page.evaluate("""
+            time.sleep(1)
+        except:
+            pass
+        
+        # 검색어 입력
+        try:
+            search_input = driver.find_element(By.CSS_SELECTOR, 'td[data-title="제안공고명"] input[type="text"]')
+            search_input.clear()
+            search_input.send_keys("컴퓨터")
+            time.sleep(1)
+        except:
+            print("[ERROR] 검색어 입력 실패")
+        
+        # 표시 건수 100건
+        try:
+            driver.execute_script("""
                 const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
                 selects.forEach(select => {
                     select.value = "100";
-                    const event = new Event('change', { bubbles: true });
-                    select.dispatchEvent(event);
+                    select.dispatchEvent(new Event('change'));
                 });
             """)
-            await asyncio.sleep(2)
-
-            # 적용 & 검색
-            await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
-            await asyncio.sleep(1)
-            await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
-            await asyncio.sleep(5)  # 검색 대기 시간 증가
-
-            # 테이블 수집
-            print("[DEBUG] 테이블 수집 시작")
-            table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
-            if table_elem:
-                rows = await table_elem.query_selector_all('tr')
-                data = []
-                for row in rows:
-                    tds = await row.query_selector_all('td')
-                    cols = []
-                    for td in tds:
-                        nobr = await td.query_selector('nobr')
-                        if nobr:
-                            text = await nobr.inner_text()
-                        else:
-                            a = await td.query_selector('a')
-                            if a:
-                                text = await a.inner_text()
-                            else:
-                                text = await td.inner_text()
-                        cols.append(text.strip())
-                    if cols and any(cols):
-                        data.append(cols)
-
-                # DataFrame 저장
-                if data:
-                    new_df = pd.DataFrame(data)
-                    headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
-                    if len(new_df.columns) < len(headers):
-                        headers = headers[:len(new_df.columns)]
-                    elif len(new_df.columns) > len(headers):
-                        new_df = new_df.iloc[:, :len(headers)]
-                    new_df.columns = headers
-
-                    file_path = 'g2b_result.xlsx'
-                    if os.path.exists(file_path):
-                        old_df = pd.read_excel(file_path)
-                        combined_df = pd.concat([old_df, new_df])
-                        combined_df.drop_duplicates(subset="제안공고번호", keep='last', inplace=True)
-                        combined_df.reset_index(drop=True, inplace=True)
-                    else:
-                        combined_df = new_df
-
-                    combined_df.to_excel(file_path, index=False)
-
-                    # 엑셀 서식
-                    wb = openpyxl.load_workbook(file_path)
-                    ws = wb.active
-                    align = Alignment(horizontal='center', vertical='center')
-                    for row in ws.iter_rows():
-                        for cell in row:
-                            cell.alignment = align
-                    col_widths = [3.5, 17, 44, 55, 15, 17.5, 17, 17, 17]
-                    for i, width in enumerate(col_widths, start=1):
-                        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
-                    wb.save(file_path)
-                    
-                    print(f"[DEBUG] 엑셀 파일 저장 완료: {file_path}")
-                else:
-                    print("[WARNING] 수집된 데이터가 없습니다.")
+            time.sleep(1)
+        except:
+            pass
+        
+        # 적용 및 검색
+        try:
+            apply_btn = driver.find_element(By.CSS_SELECTOR, 'input[type="button"][value="적용"]')
+            apply_btn.click()
+            time.sleep(1)
+            
+            search_btn = driver.find_element(By.CSS_SELECTOR, 'input[type="button"][value="검색"]')
+            search_btn.click()
+            time.sleep(3)
+        except:
+            print("[ERROR] 검색 버튼 클릭 실패")
+        
+        # 데이터 수집
+        print("[DEBUG] 데이터 수집 시작")
+        try:
+            table = driver.find_element(By.CSS_SELECTOR, 'table[id$="grdPrpsPbanc_body_table"]')
+            rows = table.find_elements(By.TAG_NAME, 'tr')
+            
+            data = []
+            for row in rows:
+                cols = []
+                cells = row.find_elements(By.TAG_NAME, 'td')
+                for cell in cells:
+                    text = cell.text.strip()
+                    cols.append(text)
+                
+                if cols and any(cols):
+                    data.append(cols)
+            
+            # 데이터 저장
+            if data:
+                save_to_excel(data)
+                print(f"[DEBUG] {len(data)}개 항목 저장 완료")
             else:
-                print("[ERROR] 테이블을 찾을 수 없습니다.")
-
-            await asyncio.sleep(2)
-
+                print("[WARNING] 수집된 데이터가 없습니다")
+                
+        except Exception as e:
+            print(f"[ERROR] 데이터 수집 실패: {e}")
+    
     except Exception as e:
-        print(f"[DEBUG] main() 오류: {e}")
+        print(f"[ERROR] 크롤링 실패: {e}")
         import traceback
         print(traceback.format_exc())
-
+    
     finally:
-        if browser:
-            await browser.close()
-        print("[DEBUG] main() 종료")
+        if driver:
+            driver.quit()
+        print("[DEBUG] 크롤링 종료")
+
+def save_to_excel(data):
+    """엑셀 파일로 저장"""
+    new_df = pd.DataFrame(data)
+    headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
+    
+    if len(new_df.columns) < len(headers):
+        headers = headers[:len(new_df.columns)]
+    elif len(new_df.columns) > len(headers):
+        new_df = new_df.iloc[:, :len(headers)]
+    
+    new_df.columns = headers
+    
+    file_path = 'g2b_result.xlsx'
+    
+    # 기존 파일과 병합
+    if os.path.exists(file_path):
+        old_df = pd.read_excel(file_path)
+        combined_df = pd.concat([old_df, new_df])
+        combined_df.drop_duplicates(subset="제안공고번호", keep='last', inplace=True)
+        combined_df.reset_index(drop=True, inplace=True)
+    else:
+        combined_df = new_df
+    
+    # 엑셀 저장
+    combined_df.to_excel(file_path, index=False)
+    
+    # 서식 적용
+    wb = openpyxl.load_workbook(file_path)
+    ws = wb.active
+    
+    align = Alignment(horizontal='center', vertical='center')
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = align
+    
+    col_widths = [3.5, 17, 44, 55, 15, 17.5, 17, 17, 17]
+    for i, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+    
+    wb.save(file_path)
