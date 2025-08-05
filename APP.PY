@@ -1,28 +1,14 @@
 import streamlit as st
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
-import openpyxl
-from openpyxl.styles import Alignment
-import os
 import traceback
-from playwright.async_api import async_playwright
-
-async def close_notice_popups(page):
-    # ... (원래 run_crawler.py 내용 그대로 삽입)
-    pass
-
-async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
-    # ... (생략)
-    pass
-
-async def main():
-    # ... (전체 run_crawler.py의 main 내용 이곳에 삽입)
-    pass
+import os
+from run_crawler import main  # 크롤러 로직 불러오기
 
 # Streamlit UI
 st.set_page_config(page_title="나라장터 제안공고 크롤러", layout="centered")
 st.title("💻 나라장터 제안공고 크롤러")
+st.caption("컴퓨터 관련 제안공고를 G2B에서 크롤링하여 다운로드합니다.")
 
 progress_bar = st.empty()
 status = st.empty()
@@ -34,7 +20,7 @@ def run_crawler_async():
         traceback.print_exc()
         raise
 
-if st.button("📦 크롤링 실행"):
+if st.button("📦 크롤링 시작"):
     st.info("Playwright 크롤링을 실행 중입니다. 잠시 기다려 주세요.")
     progress_bar.progress(5)
     status.text("브라우저 시작 중...")
