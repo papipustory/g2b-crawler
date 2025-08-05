@@ -43,12 +43,16 @@ echo "Setting up directories..."
 mkdir -p /home/appuser/.cache/ms-playwright
 chmod -R 777 /home/appuser/.cache
 
+# Python 패키지 업데이트
+pip install --upgrade pip
+
 # Playwright 브라우저 설치
 echo "Installing Playwright browsers..."
-python -m playwright install chromium --with-deps
+python -m playwright install chromium
+python -m playwright install-deps chromium
 
 # 설치 확인
 echo "Verifying installation..."
-python -m playwright install --help
+ls -la /home/appuser/.cache/ms-playwright/
 
 echo "Setup completed successfully!"
