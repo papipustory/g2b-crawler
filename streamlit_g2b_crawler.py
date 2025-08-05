@@ -23,44 +23,17 @@ st.set_page_config(
 st.title("💻 나라장터 제안공고 크롤러")
 st.markdown("컴퓨터 관련 제안공고를 G2B에서 크롤링하여 다운로드합니다.")
 
-# 초기화 함수
-@st.cache_resource
-def initialize_playwright():
-    """Playwright 초기 설정"""
+# 초기 설정 확인
+def check_environment():
+    """환경 확인"""
     try:
-        # Streamlit Cloud 환경 확인
-        if os.environ.get('STREAMLIT_SHARING_MODE'):
-            # 브라우저 경로 설정
-            os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
-            
-            # Chromium 설치 확인
-            result = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                capture_output=True,
-                text=True
-            )
-            logger.info(f"Chromium install output: {result.stdout}")
-            
-            # 의존성 설치
-            result = subprocess.run(
-                [sys.executable, "-m", "playwright", "install-deps", "chromium"],
-                capture_output=True,
-                text=True
-            )
-            logger.info(f"Dependencies install output: {result.stdout}")
-            
+        import playwright
         return True
-    except Exception as e:
-        logger.error(f"Playwright 초기화 실패: {str(e)}")
+    except ImportError:
         return False
 
-# Playwright 초기화
-if 'playwright_ready' not in st.session_state:
-    with st.spinner("브라우저 환경 준비 중..."):
-        st.session_state.playwright_ready = initialize_playwright()
-
-if not st.session_state.playwright_ready:
-    st.error("브라우저 초기화에 실패했습니다. 페이지를 새로고침해주세요.")
+if not check_environment():
+    st.error("Playwright가 설치되지 않았습니다. 관리자에게 문의하세요.")
     st.stop()
 
 # 진행 상태 표시
