@@ -39,6 +39,10 @@ apt-get install -y -qq \
     libxshmfence1 \
     xdg-utils
 
+# Clean up APT cache
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+
 # Create necessary directories
 mkdir -p ~/.cache/ms-playwright
 
