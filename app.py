@@ -4,12 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import traceback
 import nest_asyncio
+from streamlit_g2b_crawler import main as crawler_main
 
 # 중첩 이벤트 루프 허용
 nest_asyncio.apply()
-
-# streamlit_g2b_crawler.py에서 main 가져오기
-from streamlit_g2b_crawler import main as crawler_main
 
 st.set_page_config(page_title="나라장터 제안공고 크롤러", layout="centered")
 st.title("💻 나라장터 제안공고 크롤러")
