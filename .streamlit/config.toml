@@ -1,14 +1,7 @@
 [server]
-# Streamlit 앱 실행 시 기본 파일 경로
-# 여기서 app.py를 메인 모듈로 지정
 headless = true
 port = 8501
 enableCORS = false
-fileWatcherType = "auto"
-
-[runner]
-# 실행할 메인 파일
-commandLine = "streamlit run app.py"
 
 [theme]
 base = "light"
