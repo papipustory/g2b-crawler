@@ -1,5 +1,7 @@
 import streamlit as st
 import asyncio
+import nest_asyncio
+nest_asyncio.apply()
 from playwright.async_api import async_playwright
 import pandas as pd
 import os
@@ -79,7 +81,7 @@ async def close_notice_popups(page):
             break
         await asyncio.sleep(0.5)
 
-async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
+async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
     """요소 대기 및 클릭 - PC 버전과 동일"""
     try:
         await page.wait_for_selector(selector, timeout=timeout, state="visible")
@@ -112,7 +114,8 @@ async def run_crawler():
                 '--no-zygote',
                 '--single-process',
                 '--disable-gpu',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-blink-features=AutomationControlled',
+                '--disable-software-rasterizer'
             ]
             
             browser = await p.chromium.launch(
@@ -130,8 +133,8 @@ async def run_crawler():
             update_progress(0.2, "나라장터 접속 중...")
             
             # 페이지 로드
-            await page.goto("https://shop.g2b.go.kr/", timeout=30000)
-            await page.wait_for_load_state('networkidle', timeout=5000)
+            await page.goto("https://shop.g2b.go.kr/", timeout=100000)
+            await page.wait_for_load_state('networkidle', timeout=10000)
             await asyncio.sleep(3)
             
             update_progress(0.3, "팝업 처리 중...")
