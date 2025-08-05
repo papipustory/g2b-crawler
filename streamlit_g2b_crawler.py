@@ -9,40 +9,64 @@ import openpyxl
 from openpyxl.styles import Alignment
 from playwright.async_api import async_playwright
 
-# 이벤트 루프 충돌 방지
+# ===============================
+# asyncio 이벤트 루프 충돌 방지
+# (Streamlit 환경에서 필수)
+# ===============================
 nest_asyncio.apply()
 
 # ===============================
-# 크롤링 보조 함수
+# [함수] 모든 '공지팝업' 닫기
+#  - 메인 DOM과 iframe 내부를 모두 탐색
+#  - 최대 5번 반복 (팝업 여러 개 연속 처리)
 # ===============================
 async def close_notice_popups(page):
-    for _ in range(5):
-        popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
-        closed = False
-        for popup in popup_divs:
-            try:
-                for sel in ["button[class*='w2window_close']", "input[type='button'][value='닫기']"]:
-                    btn = await popup.query_selector(sel)
-                    if btn:
-                        await btn.click()
-                        await asyncio.sleep(0.2)
-                        closed = True
-                        break
-                checkbox = await popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
-                if checkbox:
-                    await checkbox.check()
-                    await asyncio.sleep(0.1)
-                    btn = await popup.query_selector("input[type='button'][value='닫기']")
-                    if btn:
-                        await btn.click()
-                        closed = True
-                        break
-            except:
-                continue
-        if not closed:
-            break
-        await asyncio.sleep(0.5)
+    """모든 '공지팝업' 닫기 (iframe 포함)"""
+    try:
+        for _ in range(5):  # 최대 5회 반복 시도
+            closed_any = False
 
+            # 1) 메인 페이지 팝업 탐색
+            popups = await page.query_selector_all("div[id*='_header'][title='공지팝업']")
+            for popup in popups:
+                try:
+                    close_btn = await popup.query_selector("button.w2window_close")
+                    if close_btn:
+                        await close_btn.click()
+                        closed_any = True
+                        await asyncio.sleep(0.2)  # 닫기 후 대기
+                except:
+                    continue
+
+            # 2) iframe 내부 팝업 탐색
+            frames = page.frames
+            for frame in frames:
+                try:
+                    popups_iframe = await frame.query_selector_all("div[id*='_header'][title='공지팝업']")
+                    for popup in popups_iframe:
+                        try:
+                            close_btn = await popup.query_selector("button.w2window_close")
+                            if close_btn:
+                                await close_btn.click()
+                                closed_any = True
+                                await asyncio.sleep(0.2)
+                        except:
+                            continue
+                except:
+                    continue
+
+            # 닫은 팝업이 하나도 없으면 종료
+            if not closed_any:
+                break
+
+    except Exception as e:
+        print(f"[close_notice_popups] 팝업 닫기 오류: {e}")
+
+# ===============================
+# [함수] 요소 대기 후 클릭
+#  - selector와 설명(desc) 지정
+#  - scroll=True 시 스크롤 후 클릭
+# ===============================
 async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
     try:
         await page.wait_for_selector(selector, timeout=timeout, state="visible")
@@ -58,26 +82,33 @@ async def wait_and_click(page, selector, desc, timeout=10000, scroll=True):
         return False
 
 # ===============================
-# 메인 크롤러
+# 메인 크롤러 함수
 # ===============================
 async def main():
     browser = None
     try:
         async with async_playwright() as p:
+            # 1️⃣ 브라우저 실행 (Cloud 최적화 옵션 적용)
             browser = await p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer"]
             )
             context = await browser.new_context()
             page = await context.new_page()
+
+            # 2️⃣ 나라장터 메인 페이지 접속
             await page.goto("https://shop.g2b.go.kr/", timeout=10000)
             await page.wait_for_load_state('networkidle', timeout=10000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(3)  # 초기 로딩 대기
 
+            # 3️⃣ 공지팝업 닫기
             await close_notice_popups(page)
+
+            # 4️⃣ 페이지 하단 스크롤 (추가 로딩 유도)
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(1)
 
+            # 5️⃣ '제안공고목록' 버튼 클릭 시도
             btn_selectors = [
                 'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
                 'a[title*="제안공고목록"]',
@@ -88,25 +119,10 @@ async def main():
             for sel in btn_selectors:
                 if await wait_and_click(page, sel, "제안공고목록 버튼"):
                     break
-            else:
-                all_a = await page.query_selector_all("a")
-                for a in all_a:
-                    try:
-                        title = await a.get_attribute("title")
-                        href = await a.get_attribute("href")
-                        inner = await a.inner_text()
-                        if (title and "제안공고" in title) or (inner and "제안공고" in inner):
-                            if href and href.strip() != "javascript:void(null)":
-                                await a.scroll_into_view_if_needed()
-                                await asyncio.sleep(0.2)
-                                await a.click()
-                                break
-                    except:
-                        continue
 
             await asyncio.sleep(0.3)
 
-            # 3개월 설정
+            # 6️⃣ 조회 기간을 '3개월'로 설정
             await page.evaluate("""
                 const radio = document.querySelector('input[title="3개월"]');
                 if (radio) {
@@ -117,11 +133,12 @@ async def main():
             """)
             await asyncio.sleep(1)
 
+            # 7️⃣ 검색어 입력 ('컴퓨터')
             input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
             if input_elem:
                 await input_elem.fill('컴퓨터', timeout=1000)
 
-            # 표시수 100건 설정
+            # 8️⃣ 표시 건수를 100건으로 변경
             await page.evaluate("""
                 const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
                 selects.forEach(select => {
@@ -132,10 +149,12 @@ async def main():
             """)
             await asyncio.sleep(1)
 
+            # 9️⃣ '적용' 버튼 클릭 → '검색' 버튼 클릭
             await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
             await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
             await asyncio.sleep(0.8)
 
+            # 🔟 검색 결과 테이블 수집
             table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
             if table_elem:
                 rows = await table_elem.query_selector_all('tr')
@@ -157,6 +176,7 @@ async def main():
                     if cols and any(cols):
                         data.append(cols)
 
+                # 1️⃣1️⃣ DataFrame 변환 + 기존 엑셀과 병합
                 if data:
                     new_df = pd.DataFrame(data)
                     headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
@@ -177,6 +197,7 @@ async def main():
 
                     combined_df.to_excel(file_path, index=False)
 
+                    # 1️⃣2️⃣ 엑셀 서식 적용
                     wb = openpyxl.load_workbook(file_path)
                     ws = wb.active
                     align = Alignment(horizontal='center', vertical='center')
@@ -207,6 +228,7 @@ st.caption("컴퓨터 관련 제안공고를 G2B에서 크롤링하여 다운로
 progress_bar = st.empty()
 status = st.empty()
 
+# 크롤러 실행 함수
 def run_crawler_async():
     try:
         asyncio.run(main())
@@ -214,6 +236,7 @@ def run_crawler_async():
         traceback.print_exc()
         raise
 
+# '크롤링 시작' 버튼 UI
 if st.button("📦 크롤링 시작"):
     st.info("Playwright 크롤링을 실행 중입니다. 잠시 기다려 주세요.")
     progress_bar.progress(5)
@@ -235,9 +258,7 @@ if st.button("📦 크롤링 시작"):
             progress_bar.empty()
             status.empty()
 
-# ===============================
 # 다운로드 버튼
-# ===============================
 excel_file = "g2b_result.xlsx"
 if os.path.exists(excel_file):
     with open(excel_file, "rb") as f:
