@@ -42,9 +42,12 @@ apt-get install -y -qq \
 # Create necessary directories
 mkdir -p ~/.cache/ms-playwright
 
-# Install Playwright browsers
-echo "Installing Playwright browsers..."
-python -m playwright install chromium
+# Install Playwright dependencies first
+echo "Installing Playwright dependencies..."
 python -m playwright install-deps chromium
+
+# Install Playwright browser
+echo "Installing Playwright browser..."
+python -m playwright install chromium
 
 echo "Setup completed!"
