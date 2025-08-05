@@ -1,5 +1,10 @@
 [server]
 headless = true
+enableCORS = false
+enableXsrfProtection = false
 
 [runner]
 magicEnabled = false
+
+[browser]
+gatherUsageStats = false
