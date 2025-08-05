@@ -1,4 +1,7 @@
-streamlit==1.31.0
-pandas==2.1.4
-playwright==1.41.2
-openpyxl==3.1.2
+streamlit
+pandas
+playwright==1.40.0
+openpyxl
+pyee==11.0.1
+greenlet==3.0.1
+typing-extensions>=4.0.0
