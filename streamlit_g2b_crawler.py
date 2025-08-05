@@ -11,6 +11,9 @@ import logging
 import sys
 import subprocess
 
+import subprocess
+subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
+
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
