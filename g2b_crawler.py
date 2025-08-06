@@ -24,7 +24,7 @@ async def close_notice_popups(page):
                         await btn.click()
                         closed = True
                         break
-            except:
+            except Exception:
                 continue
         if not closed:
             break
@@ -41,7 +41,7 @@ async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
             await elem.click()
             return True
         return False
-    except:
+    except Exception:
         return False
 
 async def run_crawler_async(query="컴퓨터"):
@@ -94,12 +94,12 @@ async def run_crawler_async(query="컴퓨터"):
                                 await a.click()
                                 clicked = True
                                 break
-                    except:
+                    except Exception:
                         continue
 
             await asyncio.sleep(0.3)
 
-            # 3개월 설정 (JS 사용 안 함, 직접 클릭)
+            # 3개월 라디오 클릭
             radio_3month = await page.query_selector('input[title="3개월"]')
             if radio_3month:
                 await radio_3month.click()
@@ -157,20 +157,15 @@ async def run_crawler_async(query="컴퓨터"):
         if browser:
             await browser.close()
 
-# Streamlit, Jupyter 등 모든 환경에서 안전하게 동작하도록
 def run_g2b_crawler(query="컴퓨터"):
-    """동기-비동기 충돌 방지: 각 단계별 동기실행 보장"""
+    """동기 래퍼: Streamlit/Jupyter에서도 Future Cancelled 방지"""
     try:
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
             import nest_asyncio
             nest_asyncio.apply()
-            return asyncio.run_coroutine_threadsafe(run_crawler_async(query), loop).result()
-        else:
+            return loop.run_until_complete(run_crawler_async(query))
+        except RuntimeError:
             return asyncio.run(run_crawler_async(query))
     except Exception as e:
         print(f"[ERROR] Crawler error: {e}")
