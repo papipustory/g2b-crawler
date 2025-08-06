@@ -1,104 +1,86 @@
-from playwright.sync_api import sync_playwright
-import time
+import asyncio
+from playwright.async_api import async_playwright
+import nest_asyncio
 
-def close_notice_popups(page):
+# Streamlit Cloud에서 asyncio 실행 가능하게
+nest_asyncio.apply()
+
+async def close_notice_popups(page):
     """팝업 닫기"""
     for _ in range(5):
-        popup_divs = page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+        popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
         closed = False
         for popup in popup_divs:
             try:
-                # 닫기 버튼 찾기
                 for sel in ["button[class*='w2window_close']", "input[type='button'][value='닫기']"]:
-                    btn = popup.query_selector(sel)
+                    btn = await popup.query_selector(sel)
                     if btn:
-                        btn.click()
-                        time.sleep(0.2)
+                        await btn.click()
+                        await asyncio.sleep(0.2)
                         closed = True
                         break
-                # 오늘 하루 체크박스
-                checkbox = popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
+                checkbox = await popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
                 if checkbox:
-                    checkbox.check()
-                    time.sleep(0.1)
-                    btn = popup.query_selector("input[type='button'][value='닫기']")
+                    await checkbox.check()
+                    await asyncio.sleep(0.1)
+                    btn = await popup.query_selector("input[type='button'][value='닫기']")
                     if btn:
-                        btn.click()
+                        await btn.click()
                         closed = True
                         break
             except:
                 continue
         if not closed:
             break
-        time.sleep(0.5)
+        await asyncio.sleep(0.5)
 
-def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
+async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
     """요소 대기 후 클릭"""
     try:
-        page.wait_for_selector(selector, timeout=timeout, state="visible")
-        elem = page.query_selector(selector)
-        if elem and elem.is_visible():
+        await page.wait_for_selector(selector, timeout=timeout, state="visible")
+        elem = await page.query_selector(selector)
+        if elem and await elem.is_visible():
             if scroll:
-                elem.scroll_into_view_if_needed()
-                time.sleep(0.02)
-            elem.click()
+                await elem.scroll_into_view_if_needed()
+                await asyncio.sleep(0.02)
+            await elem.click()
             return True
         return False
     except:
         return False
 
-def run_g2b_crawler(query="컴퓨터", status_callback=None):
-    """
-    나라장터 크롤러 - 진행 상황 표시 포함
-    
-    Args:
-        query: 검색어
-        status_callback: 상태 업데이트 함수 (step, message)
-    """
-    
-    # 상태 업데이트 헬퍼 함수
-    def update_status(step, message):
-        if status_callback:
-            status_callback(step, message)
-        print(f"[STEP {step}] {message}")
-    
+async def run_crawler_async(query="컴퓨터"):
+    """비동기 크롤러"""
     browser = None
     try:
-        with sync_playwright() as p:
-            # 브라우저 시작
-            update_status(0, "🌐 브라우저 시작 중...")
-            
-            browser = p.chromium.launch(
+        async with async_playwright() as p:
+            # Streamlit Cloud용 브라우저 설정
+            browser = await p.chromium.launch(
                 headless=True,
                 args=[
                     '--no-sandbox',
-                    '--disable-setuid-sandbox', 
+                    '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--single-process',
-                    '--no-zygote'
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
                 ]
             )
-            
-            context = browser.new_context(
-                viewport={'width': 1280, 'height': 720}
-            )
-            page = context.new_page()
+            context = await browser.new_context()
+            page = await context.new_page()
             
             # 1. 사이트 접속
-            update_status(1, "🔗 나라장터 사이트 접속 중...")
-            page.goto("https://shop.g2b.go.kr/", timeout=30000)
-            page.wait_for_load_state('networkidle', timeout=5000)
-            time.sleep(3)
+            await page.goto("https://shop.g2b.go.kr/", timeout=30000)
+            await page.wait_for_load_state('networkidle', timeout=5000)
+            await asyncio.sleep(3)
 
             # 2. 팝업 닫기
-            update_status(2, "🔒 팝업 처리 중...")
-            close_notice_popups(page)
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(1)
+            await close_notice_popups(page)
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(1)
 
             # 3. 제안공고목록 버튼 클릭
-            update_status(3, "📋 제안공고목록 버튼 찾는 중...")
             btn_selectors = [
                 'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
                 'a[title*="제안공고목록"]',
@@ -109,40 +91,35 @@ def run_g2b_crawler(query="컴퓨터", status_callback=None):
             
             clicked = False
             for sel in btn_selectors:
-                if wait_and_click(page, sel, "제안공고목록 버튼"):
+                if await wait_and_click(page, sel, "제안공고목록 버튼"):
                     clicked = True
                     break
             
-            # 대체: 모든 a 태그 검색
             if not clicked:
-                all_a = page.query_selector_all("a")
+                all_a = await page.query_selector_all("a")
                 for a in all_a:
                     try:
-                        title = a.get_attribute("title")
-                        href = a.get_attribute("href")
-                        inner = a.inner_text()
+                        title = await a.get_attribute("title")
+                        href = await a.get_attribute("href")
+                        inner = await a.inner_text()
                         if (title and "제안공고" in title) or (inner and "제안공고" in inner):
                             if href and href.strip() != "javascript:void(null)":
-                                a.scroll_into_view_if_needed()
-                                time.sleep(0.2)
-                                a.click()
+                                await a.scroll_into_view_if_needed()
+                                await asyncio.sleep(0.2)
+                                await a.click()
                                 clicked = True
                                 break
                     except:
                         continue
 
             if not clicked:
-                update_status(3, "❌ 제안공고목록 버튼을 찾을 수 없습니다")
-                browser.close()
+                await browser.close()
                 return None
 
-            time.sleep(0.3)
+            await asyncio.sleep(0.3)
 
-            # 4. 검색 조건 설정
-            update_status(4, "⚙️ 검색 조건 설정 중 (3개월, 100건)...")
-            
-            # 3개월 설정
-            page.evaluate("""
+            # 4. 3개월 설정
+            await page.evaluate("""
                 const radio = document.querySelector('input[title="3개월"]');
                 if (radio) {
                     radio.checked = true;
@@ -150,16 +127,15 @@ def run_g2b_crawler(query="컴퓨터", status_callback=None):
                     radio.dispatchEvent(event);
                 }
             """)
-            time.sleep(1)
+            await asyncio.sleep(1)
 
             # 5. 검색어 입력
-            update_status(5, f"✏️ 검색어 '{query}' 입력 중...")
-            input_elem = page.query_selector('td[data-title="제안공고명"] input[type="text"]')
+            input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
             if input_elem:
-                input_elem.fill(query, timeout=1000)
+                await input_elem.fill(query, timeout=1000)
 
-            # 표시수 100개로 설정
-            page.evaluate("""
+            # 6. 표시수 100개 설정
+            await page.evaluate("""
                 const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
                 selects.forEach(select => {
                     select.value = "100";
@@ -167,33 +143,31 @@ def run_g2b_crawler(query="컴퓨터", status_callback=None):
                     select.dispatchEvent(event);
                 });
             """)
-            time.sleep(1)
+            await asyncio.sleep(1)
 
-            # 6. 검색 실행
-            update_status(6, "🔍 검색 실행 중...")
-            wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
-            wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
-            time.sleep(0.8)
+            # 7. 적용 및 검색
+            await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
+            await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
+            await asyncio.sleep(0.8)
 
-            # 7. 데이터 추출
-            update_status(7, "📊 검색 결과 데이터 추출 중...")
-            table_elem = page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
+            # 8. 데이터 추출
+            table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
             if table_elem:
-                rows = table_elem.query_selector_all('tr')
+                rows = await table_elem.query_selector_all('tr')
                 data = []
                 for row in rows:
-                    tds = row.query_selector_all('td')
+                    tds = await row.query_selector_all('td')
                     cols = []
                     for td in tds:
-                        nobr = td.query_selector('nobr')
+                        nobr = await td.query_selector('nobr')
                         if nobr:
-                            text = nobr.inner_text()
+                            text = await nobr.inner_text()
                         else:
-                            a = td.query_selector('a')
+                            a = await td.query_selector('a')
                             if a:
-                                text = a.inner_text()
+                                text = await a.inner_text()
                             else:
-                                text = td.inner_text()
+                                text = await td.inner_text()
                         cols.append(text.strip())
                     if cols and any(cols):
                         data.append(cols)
@@ -204,17 +178,27 @@ def run_g2b_crawler(query="컴퓨터", status_callback=None):
                     if len(data[0]) < len(headers):
                         headers = headers[:len(data[0])]
                     
-                    update_status(8, f"✅ 데이터 추출 완료: {len(data)}개 항목")
-                    browser.close()
+                    await browser.close()
                     return headers, data
 
-            browser.close()
+            await browser.close()
             return None
 
     except Exception as e:
-        if status_callback:
-            status_callback(99, f"❌ 오류 발생: {str(e)}")
-        print(f"[ERROR] 크롤링 실패: {str(e)}")
+        print(f"Error occurred: {e}")
         if browser:
-            browser.close()
-        raise e
+            await browser.close()
+        return None
+
+def run_g2b_crawler(query="컴퓨터"):
+    """동기 함수 래퍼 (Streamlit용)"""
+    try:
+        # 비동기 함수를 동기적으로 실행
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(run_crawler_async(query))
+        loop.close()
+        return result
+    except Exception as e:
+        print(f"Crawler error: {e}")
+        return None
