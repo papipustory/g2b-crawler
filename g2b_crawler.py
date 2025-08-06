@@ -47,12 +47,27 @@ def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
     except:
         return False
 
-def run_g2b_crawler(query="컴퓨터"):
-    """나라장터 크롤러 - 동기 버전"""
+def run_g2b_crawler(query="컴퓨터", status_callback=None):
+    """
+    나라장터 크롤러 - 진행 상황 표시 포함
+    
+    Args:
+        query: 검색어
+        status_callback: 상태 업데이트 함수 (step, message)
+    """
+    
+    # 상태 업데이트 헬퍼 함수
+    def update_status(step, message):
+        if status_callback:
+            status_callback(step, message)
+        print(f"[STEP {step}] {message}")
+    
     browser = None
     try:
         with sync_playwright() as p:
-            # Streamlit Cloud용 브라우저 옵션
+            # 브라우저 시작
+            update_status(0, "🌐 브라우저 시작 중...")
+            
             browser = p.chromium.launch(
                 headless=True,
                 args=[
@@ -71,19 +86,19 @@ def run_g2b_crawler(query="컴퓨터"):
             page = context.new_page()
             
             # 1. 사이트 접속
-            print("[INFO] 나라장터 접속 중...")
+            update_status(1, "🔗 나라장터 사이트 접속 중...")
             page.goto("https://shop.g2b.go.kr/", timeout=30000)
             page.wait_for_load_state('networkidle', timeout=5000)
             time.sleep(3)
 
             # 2. 팝업 닫기
-            print("[INFO] 팝업 처리 중...")
+            update_status(2, "🔒 팝업 처리 중...")
             close_notice_popups(page)
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1)
 
             # 3. 제안공고목록 버튼 클릭
-            print("[INFO] 제안공고목록 버튼 찾는 중...")
+            update_status(3, "📋 제안공고목록 버튼 찾는 중...")
             btn_selectors = [
                 'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
                 'a[title*="제안공고목록"]',
@@ -117,14 +132,16 @@ def run_g2b_crawler(query="컴퓨터"):
                         continue
 
             if not clicked:
-                print("[ERROR] 제안공고목록 버튼을 찾을 수 없습니다")
+                update_status(3, "❌ 제안공고목록 버튼을 찾을 수 없습니다")
                 browser.close()
                 return None
 
             time.sleep(0.3)
 
-            # 4. 3개월 설정
-            print("[INFO] 검색 조건 설정 중...")
+            # 4. 검색 조건 설정
+            update_status(4, "⚙️ 검색 조건 설정 중 (3개월, 100건)...")
+            
+            # 3개월 설정
             page.evaluate("""
                 const radio = document.querySelector('input[title="3개월"]');
                 if (radio) {
@@ -136,11 +153,12 @@ def run_g2b_crawler(query="컴퓨터"):
             time.sleep(1)
 
             # 5. 검색어 입력
+            update_status(5, f"✏️ 검색어 '{query}' 입력 중...")
             input_elem = page.query_selector('td[data-title="제안공고명"] input[type="text"]')
             if input_elem:
                 input_elem.fill(query, timeout=1000)
 
-            # 6. 표시수 100개로 설정
+            # 표시수 100개로 설정
             page.evaluate("""
                 const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
                 selects.forEach(select => {
@@ -151,13 +169,14 @@ def run_g2b_crawler(query="컴퓨터"):
             """)
             time.sleep(1)
 
-            # 7. 적용 및 검색
+            # 6. 검색 실행
+            update_status(6, "🔍 검색 실행 중...")
             wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
             wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
             time.sleep(0.8)
 
-            # 8. 데이터 추출
-            print("[INFO] 데이터 추출 중...")
+            # 7. 데이터 추출
+            update_status(7, "📊 검색 결과 데이터 추출 중...")
             table_elem = page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
             if table_elem:
                 rows = table_elem.query_selector_all('tr')
@@ -185,7 +204,7 @@ def run_g2b_crawler(query="컴퓨터"):
                     if len(data[0]) < len(headers):
                         headers = headers[:len(data[0])]
                     
-                    print(f"[INFO] 크롤링 성공: {len(data)}개 항목")
+                    update_status(8, f"✅ 데이터 추출 완료: {len(data)}개 항목")
                     browser.close()
                     return headers, data
 
@@ -193,7 +212,9 @@ def run_g2b_crawler(query="컴퓨터"):
             return None
 
     except Exception as e:
+        if status_callback:
+            status_callback(99, f"❌ 오류 발생: {str(e)}")
         print(f"[ERROR] 크롤링 실패: {str(e)}")
         if browser:
             browser.close()
-        return None
+        raise e
