@@ -1,275 +1,200 @@
 import os
 import time
-import asyncio
-import nest_asyncio
-from playwright.sync_api import sync_playwright
+import logging
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
-# 비동기 환경 설정 (Streamlit Cloud용)
-nest_asyncio.apply()
+# 로깅 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def run_g2b_crawler(query: str = "컴퓨터"):
+def run_g2b_crawler(query: str = "컴퓨터", max_retries: int = 3):
     """
-    G2B 크롤러 실행 함수 (Streamlit Cloud 최적화)
+    나라장터 제안공고 크롤러
+    Streamlit Cloud 환경에 최적화된 버전
     """
-    try:
-        # Streamlit Cloud 환경 변수 설정
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-        
-        with sync_playwright() as p:
-            # Chromium 브라우저 실행 (Streamlit Cloud 최적화)
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-web-security",
-                    "--disable-software-rasterizer",
-                    "--disable-background-timer-throttling",
-                    "--disable-backgrounding-occluded-windows",
-                    "--disable-renderer-backgrounding",
-                    "--disable-features=TranslateUI",
-                    "--disable-ipc-flooding-protection",
-                    "--single-process"
-                ]
-            )
+    
+    # Streamlit Cloud 환경 변수 설정
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"  # 시스템 기본 경로 사용
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"크롤링 시도 {attempt + 1}/{max_retries}")
             
-            # 새 페이지 생성
-            page = browser.new_page()
-            
-            # User Agent 설정 (차단 방지)
-            page.set_extra_http_headers({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            })
-            
-            # 타임아웃 설정
-            page.set_default_timeout(30000)  # 30초
-            
-            print(f"검색어: {query}")
-            
-            # (1) 나라장터 제안공고 페이지 진입
-            url = "https://shop.g2b.go.kr/"
-            print(f"페이지 접속 중: {url}")
-            page.goto(url, wait_until="networkidle")
-            
-            # 페이지 로드 대기
-            time.sleep(3)
-            
-            # (2) 팝업 닫기 (존재할 때만)
-            try:
+            with sync_playwright() as p:
+                # Chromium 브라우저 실행 (Streamlit Cloud 최적화 옵션)
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-first-run',
+                        '--no-zygote',
+                        '--single-process',  # 중요: 단일 프로세스 모드
+                        '--disable-gpu',
+                        '--disable-features=VizDisplayCompositor',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins',
+                        '--disable-site-isolation-trials'
+                    ]
+                )
+                
+                # 컨텍스트 생성 (더 안정적인 설정)
+                context = browser.new_context(
+                    viewport={'width': 1280, 'height': 720},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
+                
+                page = context.new_page()
+                page.set_default_timeout(30000)  # 30초 타임아웃
+                
+                logger.info("나라장터 페이지 접속 시도...")
+                
+                # 1. 메인 페이지 접속
+                url = "https://shop.g2b.go.kr/"
+                response = page.goto(url, wait_until='networkidle', timeout=30000)
+                
+                if not response or response.status != 200:
+                    logger.error(f"페이지 접속 실패: {response.status if response else 'No response'}")
+                    raise Exception("페이지 접속 실패")
+                
+                logger.info("페이지 접속 성공")
+                
+                # 2. 페이지 로딩 대기
+                page.wait_for_load_state('domcontentloaded')
+                time.sleep(2)  # 추가 대기
+                
+                # 3. 팝업 처리 (여러 선택자 시도)
                 popup_selectors = [
                     'button.close',
-                    '.popup_close', 
+                    '.popup_close',
                     '.layerPopup-close',
-                    '[onclick*="closeLayer"]',
-                    '.btn_close'
+                    'a.close',
+                    'button[onclick*="close"]',
+                    'img[alt*="닫기"]'
                 ]
+                
                 for selector in popup_selectors:
                     try:
-                        if page.query_selector(selector):
-                            page.click(selector)
-                            print("팝업 닫기 성공")
-                            time.sleep(1)
+                        if page.locator(selector).count() > 0:
+                            page.click(selector, timeout=2000)
+                            logger.info(f"팝업 닫기 성공: {selector}")
                             break
                     except:
                         continue
-            except Exception as e:
-                print(f"팝업 닫기 실패: {e}")
-            
-            # (3) '제안공고목록' 버튼 찾기 및 클릭
-            try:
-                # 여러 가능한 셀렉터 시도
-                notice_selectors = [
+                
+                # 4. 제안공고목록 버튼 찾기 및 클릭
+                logger.info("제안공고목록 버튼 찾는 중...")
+                
+                # 여러 가능한 선택자 시도
+                button_selectors = [
                     'a[onclick*="popNoticeList"]',
-                    'a[href*="popNoticeList"]',
                     'a:has-text("제안공고목록")',
-                    'button:has-text("제안공고목록")'
+                    'button:has-text("제안공고목록")',
+                    '//a[contains(text(), "제안공고목록")]',
+                    '//button[contains(text(), "제안공고목록")]'
                 ]
                 
-                clicked = False
-                for selector in notice_selectors:
+                button_clicked = False
+                for selector in button_selectors:
                     try:
-                        element = page.wait_for_selector(selector, timeout=5000)
-                        if element:
-                            page.click(selector)
-                            print("제안공고목록 버튼 클릭 성공")
-                            clicked = True
-                            break
+                        if selector.startswith('//'):
+                            page.click(selector, timeout=5000)
+                        else:
+                            page.click(selector, timeout=5000)
+                        button_clicked = True
+                        logger.info(f"제안공고목록 버튼 클릭 성공: {selector}")
+                        break
                     except:
                         continue
                 
-                if not clicked:
-                    print("제안공고목록 버튼을 찾을 수 없습니다")
-                    browser.close()
+                if not button_clicked:
+                    logger.error("제안공고목록 버튼을 찾을 수 없습니다")
+                    raise Exception("제안공고목록 버튼 없음")
+                
+                # 5. 새 창/프레임 대기
+                time.sleep(3)
+                
+                # 팝업 윈도우 처리
+                if len(context.pages) > 1:
+                    # 새 창이 열린 경우
+                    popup_page = context.pages[-1]
+                    logger.info("새 창에서 작업 진행")
+                    
+                    # 검색 수행
+                    popup_page.wait_for_load_state('domcontentloaded')
+                    popup_page.fill('input[name="searchWrd"]', query)
+                    popup_page.click('button[onclick*="fn_search"]')
+                    time.sleep(3)
+                    
+                    # 데이터 추출
+                    popup_page.wait_for_selector('table.tb_list', timeout=10000)
+                    header = [th.inner_text().strip() for th in popup_page.query_selector_all('table.tb_list thead th')]
+                    
+                    rows = popup_page.query_selector_all('table.tb_list tbody tr')
+                    table_data = []
+                    for row in rows:
+                        cols = [col.inner_text().strip() for col in row.query_selector_all('td')]
+                        if cols and any(cols):  # 빈 행 제외
+                            table_data.append(cols)
+                    
+                else:
+                    # iframe 처리
+                    frames = page.frames
+                    popup_frame = None
+                    
+                    for frame in frames:
+                        if "popNoticeList" in frame.url or "pop" in frame.url.lower():
+                            popup_frame = frame
+                            break
+                    
+                    if not popup_frame and len(frames) > 1:
+                        popup_frame = frames[-1]  # 마지막 프레임 시도
+                    
+                    if not popup_frame:
+                        logger.error("팝업 프레임을 찾을 수 없습니다")
+                        raise Exception("팝업 프레임 없음")
+                    
+                    logger.info("iframe에서 작업 진행")
+                    
+                    # 검색 수행
+                    popup_frame.fill('input[name="searchWrd"]', query)
+                    popup_frame.click('button[onclick*="fn_search"]')
+                    time.sleep(3)
+                    
+                    # 데이터 추출
+                    popup_frame.wait_for_selector('table.tb_list', timeout=10000)
+                    header = [th.inner_text().strip() for th in popup_frame.query_selector_all('table.tb_list thead th')]
+                    
+                    rows = popup_frame.query_selector_all('table.tb_list tbody tr')
+                    table_data = []
+                    for row in rows:
+                        cols = [col.inner_text().strip() for col in row.query_selector_all('td')]
+                        if cols and any(cols):
+                            table_data.append(cols)
+                
+                browser.close()
+                
+                if table_data:
+                    logger.info(f"크롤링 성공: {len(table_data)}개 항목")
+                    return header, table_data
+                else:
+                    logger.warning("검색 결과가 없습니다")
                     return None
                     
-            except Exception as e:
-                print(f"제안공고목록 버튼 클릭 실패: {e}")
-                browser.close()
-                return None
-            
-            # 팝업 로딩 대기
-            time.sleep(5)
-            
-            # (4) 팝업 프레임 탐색
-            frames = page.frames
-            popup_frame = None
-            
-            print(f"총 프레임 수: {len(frames)}")
-            for i, frame in enumerate(frames):
-                print(f"프레임 {i}: {frame.url}")
-                if "popNoticeList" in frame.url or "Notice" in frame.url:
-                    popup_frame = frame
-                    print(f"타겟 프레임 발견: {frame.url}")
-                    break
-            
-            # 프레임을 찾지 못한 경우 새 창/탭 확인
-            if not popup_frame:
-                try:
-                    # 새 페이지가 열렸는지 확인
-                    all_pages = browser.contexts[0].pages
-                    if len(all_pages) > 1:
-                        popup_frame = all_pages[-1]  # 마지막에 열린 페이지
-                        print("새 페이지에서 팝업 발견")
-                    else:
-                        print("팝업 프레임을 찾을 수 없습니다")
-                        browser.close()
-                        return None
-                except Exception as e:
-                    print(f"새 페이지 확인 실패: {e}")
-                    browser.close()
-                    return None
-            
-            # (5) 검색창에 입력 및 검색 실행
-            try:
-                # 검색창 찾기
-                search_selectors = [
-                    'input[name="searchWrd"]',
-                    'input[id*="search"]',
-                    'input[placeholder*="검색"]',
-                    'input[type="text"]'
-                ]
-                
-                search_input = None
-                for selector in search_selectors:
-                    try:
-                        search_input = popup_frame.wait_for_selector(selector, timeout=5000)
-                        if search_input:
-                            break
-                    except:
-                        continue
-                
-                if not search_input:
-                    print("검색창을 찾을 수 없습니다")
-                    browser.close()
-                    return None
-                
-                # 검색어 입력
-                popup_frame.fill(search_selectors[0], query)
-                print(f"검색어 입력 완료: {query}")
-                
-                # 검색 버튼 클릭
-                search_btn_selectors = [
-                    'button[onclick*="fn_search"]',
-                    'button[onclick*="search"]',
-                    'input[type="submit"]',
-                    'button:has-text("검색")'
-                ]
-                
-                for selector in search_btn_selectors:
-                    try:
-                        popup_frame.click(selector)
-                        print("검색 버튼 클릭 성공")
-                        break
-                    except:
-                        continue
-                
-                # 검색 결과 로딩 대기
+        except PlaywrightTimeout as e:
+            logger.error(f"타임아웃 오류: {e}")
+            if attempt < max_retries - 1:
                 time.sleep(5)
-                
-            except Exception as e:
-                print(f"검색 실행 실패: {e}")
-                browser.close()
-                return None
+                continue
+            return None
             
-            # (6) 테이블 데이터 추출
-            try:
-                # 테이블 대기
-                table_selectors = [
-                    'table.tb_list',
-                    'table[class*="list"]',
-                    'table tbody tr',
-                    '.list-table'
-                ]
-                
-                table_found = False
-                for selector in table_selectors:
-                    try:
-                        popup_frame.wait_for_selector(selector, timeout=10000)
-                        table_found = True
-                        break
-                    except:
-                        continue
-                
-                if not table_found:
-                    print("테이블을 찾을 수 없습니다")
-                    browser.close()
-                    return None
-                
-                # 헤더 추출
-                header_selectors = [
-                    'table.tb_list thead th',
-                    'table thead th',
-                    'table th'
-                ]
-                
-                header = []
-                for selector in header_selectors:
-                    try:
-                        header_elements = popup_frame.query_selector_all(selector)
-                        if header_elements:
-                            header = [th.inner_text().strip() for th in header_elements]
-                            break
-                    except:
-                        continue
-                
-                # 데이터 행 추출
-                row_selectors = [
-                    'table.tb_list tbody tr',
-                    'table tbody tr',
-                    'table tr'
-                ]
-                
-                table_data = []
-                for selector in row_selectors:
-                    try:
-                        rows = popup_frame.query_selector_all(selector)
-                        if rows:
-                            for row in rows:
-                                cols = row.query_selector_all('td')
-                                if cols:
-                                    row_data = [col.inner_text().strip() for col in cols]
-                                    if row_data and any(cell.strip() for cell in row_data):
-                                        table_data.append(row_data)
-                            if table_data:
-                                break
-                    except:
-                        continue
-                
-                if not table_data:
-                    print("테이블 데이터가 없습니다")
-                    browser.close()
-                    return None
-                
-                print(f"데이터 추출 완료: {len(table_data)}개 행")
-                browser.close()
-                return header, table_data
-                
-            except Exception as e:
-                print(f"테이블 데이터 추출 실패: {e}")
-                browser.close()
-                return None
-                
-    except Exception as e:
-        print(f"크롤러 실행 중 오류 발생: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"크롤링 오류: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            return None
+    
+    return None
