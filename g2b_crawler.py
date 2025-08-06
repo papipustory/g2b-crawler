@@ -1,201 +1,210 @@
-import os
-import time
-from playwright.sync_api import sync_playwright
+import asyncio
+from playwright.async_api import async_playwright
+import pandas as pd
+import nest_asyncio
 
-def run_g2b_crawler(query: str = "컴퓨터"):
-    """
-    나라장터 제안공고 크롤러 - Streamlit Cloud 최적화 버전
-    """
-    
-    # 브라우저 초기화
-    with sync_playwright() as p:
-        try:
-            # Chromium 브라우저 실행 (Streamlit Cloud 환경)
-            browser = p.chromium.launch(
+# Streamlit Cloud에서 asyncio 실행을 위해 필요
+nest_asyncio.apply()
+
+async def close_notice_popups(page):
+    """공지사항 팝업 닫기"""
+    for _ in range(5):
+        popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+        closed = False
+        for popup in popup_divs:
+            try:
+                # 닫기 버튼 찾기
+                for sel in ["button[class*='w2window_close']", "input[type='button'][value='닫기']"]:
+                    btn = await popup.query_selector(sel)
+                    if btn:
+                        await btn.click()
+                        await asyncio.sleep(0.2)
+                        closed = True
+                        break
+                # 오늘 하루 체크박스
+                checkbox = await popup.query_selector("input[type='checkbox'][title*='오늘 하루']")
+                if checkbox:
+                    await checkbox.check()
+                    await asyncio.sleep(0.1)
+                    btn = await popup.query_selector("input[type='button'][value='닫기']")
+                    if btn:
+                        await btn.click()
+                        closed = True
+                        break
+            except:
+                continue
+        if not closed:
+            break
+        await asyncio.sleep(0.5)
+
+async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
+    """요소 대기 후 클릭"""
+    try:
+        await page.wait_for_selector(selector, timeout=timeout, state="visible")
+        elem = await page.query_selector(selector)
+        if elem and await elem.is_visible():
+            if scroll:
+                await elem.scroll_into_view_if_needed()
+                await asyncio.sleep(0.02)
+            await elem.click()
+            return True
+        return False
+    except:
+        return False
+
+async def run_crawler_async(query="컴퓨터"):
+    """비동기 크롤러 메인 함수"""
+    browser = None
+    try:
+        async with async_playwright() as p:
+            # Streamlit Cloud 최적화 브라우저 옵션
+            browser = await p.chromium.launch(
                 headless=True,
                 args=[
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                    '--disable-blink-features=AutomationControlled',
-                    '--single-process',  # 중요: Streamlit Cloud에서 필수
+                    '--single-process',
                     '--no-zygote',
-                    '--no-first-run',
-                    '--window-size=1280,720'
+                    '--disable-blink-features=AutomationControlled'
                 ]
             )
             
-            page = browser.new_page()
+            context = await browser.new_context(
+                viewport={'width': 1280, 'height': 720}
+            )
+            page = await context.new_page()
             
-            # 1. 나라장터 메인 페이지 접속
-            print(f"[INFO] 나라장터 접속 중...")
-            url = "https://shop.g2b.go.kr/"
-            page.goto(url, wait_until='domcontentloaded', timeout=30000)
-            
-            # 페이지 로드 대기
-            page.wait_for_timeout(3000)
-            
-            # 2. 팝업 닫기 (여러 종류의 팝업 처리)
-            print(f"[INFO] 팝업 확인 중...")
-            popup_closed = False
-            popup_selectors = [
-                'button.close',
-                '.popup_close', 
-                '.layerPopup-close',
-                'a.close',
-                'img[alt*="닫기"]',
-                'button[title*="닫기"]',
-                '.btn_close'
+            # 1. 사이트 접속
+            await page.goto("https://shop.g2b.go.kr/", timeout=30000)
+            await page.wait_for_load_state('networkidle', timeout=5000)
+            await asyncio.sleep(3)
+
+            # 2. 팝업 닫기
+            await close_notice_popups(page)
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(1)
+
+            # 3. 제안공고목록 버튼 클릭
+            btn_selectors = [
+                'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
+                'a[title*="제안공고목록"]',
+                'a:has-text("제안공고목록")',
+                '//a[contains(text(), "제안공고목록")]',
+                'div.w2textbox:text("제안공고목록")',
             ]
             
-            for selector in popup_selectors:
-                try:
-                    if page.locator(selector).count() > 0:
-                        page.locator(selector).first.click(timeout=2000)
-                        popup_closed = True
-                        print(f"[INFO] 팝업 닫기 성공: {selector}")
-                        break
-                except:
-                    continue
+            clicked = False
+            for sel in btn_selectors:
+                if await wait_and_click(page, sel, "제안공고목록 버튼"):
+                    clicked = True
+                    break
             
-            if not popup_closed:
-                print(f"[INFO] 닫을 팝업이 없거나 이미 닫혀있음")
-            
-            # 3. 제안공고목록 버튼 클릭
-            print(f"[INFO] 제안공고목록 버튼 찾는 중...")
-            
-            # JavaScript로 직접 클릭 시도
-            try:
-                # onclick 속성으로 찾기
-                page.evaluate("""
-                    const links = document.querySelectorAll('a');
-                    for (let link of links) {
-                        if (link.onclick && link.onclick.toString().includes('popNoticeList')) {
-                            link.click();
-                            break;
-                        }
-                    }
-                """)
-                page.wait_for_timeout(2000)
-            except:
-                # 텍스트로 찾기
-                try:
-                    page.click('a:has-text("제안공고목록")', timeout=5000)
-                except:
-                    print(f"[ERROR] 제안공고목록 버튼을 찾을 수 없습니다")
-                    browser.close()
-                    return None
-            
-            print(f"[INFO] 제안공고목록 클릭 완료")
-            
-            # 4. 새 창 또는 iframe 대기
-            page.wait_for_timeout(3000)
-            
-            # 팝업 창 확인
-            all_pages = browser.contexts[0].pages
-            if len(all_pages) > 1:
-                # 새 창이 열린 경우
-                popup_page = all_pages[-1]
-                print(f"[INFO] 새 창에서 작업 진행")
-                
-                # 새 창 로드 대기
-                popup_page.wait_for_load_state('domcontentloaded')
-                
-                # 5. 검색 수행
-                try:
-                    popup_page.fill('input[name="searchWrd"]', query, timeout=5000)
-                    popup_page.click('button[onclick*="fn_search"]', timeout=5000)
-                except:
-                    # 대체 선택자 시도
-                    popup_page.fill('#searchWrd', query, timeout=5000)
-                    popup_page.click('#searchBtn', timeout=5000)
-                
-                page.wait_for_timeout(3000)
-                
-                # 6. 데이터 추출
-                popup_page.wait_for_selector('table.tb_list', timeout=10000)
-                
-                # 헤더 추출
-                header = []
-                header_elements = popup_page.query_selector_all('table.tb_list thead th')
-                for th in header_elements:
-                    header.append(th.inner_text().strip())
-                
-                # 데이터 추출
-                rows = popup_page.query_selector_all('table.tb_list tbody tr')
-                table_data = []
-                for row in rows:
-                    cols = row.query_selector_all('td')
-                    row_data = []
-                    for col in cols:
-                        row_data.append(col.inner_text().strip())
-                    if row_data and any(row_data):  # 빈 행 제외
-                        table_data.append(row_data)
-                
-            else:
-                # iframe 처리
-                print(f"[INFO] iframe 찾는 중...")
-                frames = page.frames
-                popup_frame = None
-                
-                for frame in frames:
-                    frame_url = frame.url
-                    if "pop" in frame_url.lower() or frame != page.main_frame:
-                        popup_frame = frame
-                        break
-                
-                if not popup_frame:
-                    print(f"[ERROR] 팝업 프레임을 찾을 수 없습니다")
-                    browser.close()
-                    return None
-                
-                print(f"[INFO] iframe에서 작업 진행")
-                
-                # 5. 검색 수행
-                try:
-                    popup_frame.fill('input[name="searchWrd"]', query, timeout=5000)
-                    popup_frame.click('button[onclick*="fn_search"]', timeout=5000)
-                except:
-                    # 대체 선택자 시도
-                    popup_frame.fill('#searchWrd', query, timeout=5000)
-                    popup_frame.click('#searchBtn', timeout=5000)
-                
-                page.wait_for_timeout(3000)
-                
-                # 6. 데이터 추출
-                popup_frame.wait_for_selector('table.tb_list', timeout=10000)
-                
-                # 헤더 추출
-                header = []
-                header_elements = popup_frame.query_selector_all('table.tb_list thead th')
-                for th in header_elements:
-                    header.append(th.inner_text().strip())
-                
-                # 데이터 추출  
-                rows = popup_frame.query_selector_all('table.tb_list tbody tr')
-                table_data = []
-                for row in rows:
-                    cols = row.query_selector_all('td')
-                    row_data = []
-                    for col in cols:
-                        row_data.append(col.inner_text().strip())
-                    if row_data and any(row_data):  # 빈 행 제외
-                        table_data.append(row_data)
-            
-            browser.close()
-            
-            if table_data:
-                print(f"[INFO] 크롤링 성공: {len(table_data)}개 항목")
-                return header, table_data
-            else:
-                print(f"[WARNING] 검색 결과가 없습니다")
+            # 대체 방법: 모든 a 태그 검색
+            if not clicked:
+                all_a = await page.query_selector_all("a")
+                for a in all_a:
+                    try:
+                        title = await a.get_attribute("title")
+                        href = await a.get_attribute("href")
+                        inner = await a.inner_text()
+                        if (title and "제안공고" in title) or (inner and "제안공고" in inner):
+                            if href and href.strip() != "javascript:void(null)":
+                                await a.scroll_into_view_if_needed()
+                                await asyncio.sleep(0.2)
+                                await a.click()
+                                clicked = True
+                                break
+                    except:
+                        continue
+
+            if not clicked:
                 return None
-                
-        except Exception as e:
-            print(f"[ERROR] 크롤링 실패: {str(e)}")
-            if browser:
-                browser.close()
+
+            await asyncio.sleep(0.3)
+
+            # 4. 3개월 설정
+            await page.evaluate("""
+                const radio = document.querySelector('input[title="3개월"]');
+                if (radio) {
+                    radio.checked = true;
+                    const event = new Event('click', { bubbles: true });
+                    radio.dispatchEvent(event);
+                }
+            """)
+            await asyncio.sleep(1)
+
+            # 5. 검색어 입력
+            input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
+            if input_elem:
+                await input_elem.fill(query, timeout=1000)
+
+            # 6. 표시수 100개로 설정
+            await page.evaluate("""
+                const selects = document.querySelectorAll('select[id*="RecordCountPerPage"]');
+                selects.forEach(select => {
+                    select.value = "100";
+                    const event = new Event('change', { bubbles: true });
+                    select.dispatchEvent(event);
+                });
+            """)
+            await asyncio.sleep(1)
+
+            # 7. 적용 및 검색 버튼 클릭
+            await wait_and_click(page, 'input[type="button"][value="적용"]', "적용버튼", scroll=False)
+            await wait_and_click(page, 'input[type="button"][value="검색"]', "검색버튼", scroll=False)
+            await asyncio.sleep(0.8)
+
+            # 8. 데이터 추출
+            table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
+            if table_elem:
+                rows = await table_elem.query_selector_all('tr')
+                data = []
+                for row in rows:
+                    tds = await row.query_selector_all('td')
+                    cols = []
+                    for td in tds:
+                        nobr = await td.query_selector('nobr')
+                        if nobr:
+                            text = await nobr.inner_text()
+                        else:
+                            a = await td.query_selector('a')
+                            if a:
+                                text = await a.inner_text()
+                            else:
+                                text = await td.inner_text()
+                        cols.append(text.strip())
+                    if cols and any(cols):
+                        data.append(cols)
+
+                if data:
+                    headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
+                    if len(data[0]) < len(headers):
+                        headers = headers[:len(data[0])]
+                    elif len(data[0]) > len(headers):
+                        for row in data:
+                            row = row[:len(headers)]
+                    
+                    return headers, data
+
+            await asyncio.sleep(2)
             return None
+
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        return None
+
+    finally:
+        if browser:
+            await browser.close()
+
+def run_g2b_crawler(query="컴퓨터"):
+    """동기 함수로 래핑 (Streamlit용)"""
+    try:
+        # 비동기 함수를 동기적으로 실행
+        result = asyncio.run(run_crawler_async(query))
+        return result
+    except Exception as e:
+        print(f"Crawler error: {e}")
+        return None
