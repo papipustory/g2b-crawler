@@ -1,6 +1,36 @@
 import asyncio
 from playwright.async_api import async_playwright
 import nest_asyncio
+import urllib.request
+import json
+
+def get_server_country():
+    """서버의 공인 IP/국가코드/통신사 반환"""
+    try:
+        with urllib.request.urlopen("https://ipinfo.io/json", timeout=5) as url:
+            data = json.loads(url.read().decode())
+            ip = data.get("ip", "")
+            country = data.get("country", "")
+            org = data.get("org", "")
+            return ip, country, org
+    except Exception as e:
+        print(f"[ERROR] 서버 위치 확인 실패: {e}")
+        return None, None, None
+
+def test_site_access(url="https://shop.g2b.go.kr/"):
+    """해당 URL이 서버(클라우드/로컬)에서 정상 접근 가능한지 미리 테스트"""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read(2048).decode(errors='ignore')
+            lower = html.lower()
+            if ("접근" in lower and "제한" in lower) or ("blocked" in lower) or ("captcha" in lower) or ("cloudflare" in lower):
+                return False, "사이트에서 접근이 제한/차단됨 (페이지 내 경고 탐지)"
+            if resp.status not in (200, 302):
+                return False, f"비정상 응답코드: {resp.status}"
+            return True, "정상 접근 가능"
+    except Exception as e:
+        return False, f"접근 실패: {e}"
 
 async def close_notice_popups(page):
     for _ in range(5):
@@ -47,6 +77,14 @@ async def wait_and_click(page, selector, desc, timeout=3000, scroll=True):
 async def run_crawler_async(query="컴퓨터"):
     browser = None
     try:
+        # 서버 위치/접속 정보 로그
+        ip, country, org = get_server_country()
+        print(f"[INFO] 서버 공인IP: {ip}, 국가: {country}, 통신사: {org}")
+        ok, access_msg = test_site_access("https://shop.g2b.go.kr/")
+        print(f"[INFO] 사이트 접근 체크: {access_msg}")
+        if not ok:
+            raise RuntimeError(f"사이트 접근 차단: {access_msg}")
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
@@ -62,7 +100,10 @@ async def run_crawler_async(query="컴퓨터"):
             context = await browser.new_context()
             page = await context.new_page()
             await page.goto("https://shop.g2b.go.kr/", timeout=30000)
-            await page.wait_for_load_state('networkidle', timeout=5000)
+            await page.wait_for_load_state('networkidle', timeout=10000)
+            print(f"[INFO] 접속 페이지 URL: {page.url}")
+            html = await page.content()
+            print(f"[INFO] 페이지 헤드: {html[:500]}")
             await asyncio.sleep(3)
 
             await close_notice_popups(page)
@@ -99,7 +140,6 @@ async def run_crawler_async(query="컴퓨터"):
 
             await asyncio.sleep(0.3)
 
-            # 3개월 라디오 클릭
             radio_3month = await page.query_selector('input[title="3개월"]')
             if radio_3month:
                 await radio_3month.click()
@@ -110,7 +150,6 @@ async def run_crawler_async(query="컴퓨터"):
                 await input_elem.fill(query)
                 await asyncio.sleep(0.5)
 
-            # 표시수 100개 선택
             select_elem = await page.query_selector('select[id*="RecordCountPerPage"]')
             if select_elem:
                 await select_elem.select_option("100")
@@ -158,7 +197,7 @@ async def run_crawler_async(query="컴퓨터"):
             await browser.close()
 
 def run_g2b_crawler(query="컴퓨터"):
-    """동기 래퍼: Streamlit/Jupyter에서도 Future Cancelled 방지"""
+    """동기 래퍼: 접속 진단 포함, Streamlit/Jupyter에서도 Future Cancelled 방지"""
     try:
         try:
             loop = asyncio.get_running_loop()
