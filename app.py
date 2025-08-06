@@ -30,7 +30,7 @@ if 'playwright_installed' not in st.session_state:
 
 # 크롤러 import
 if st.session_state.get('playwright_installed', False):
-    from g2b_crawler import run_g2b_crawler
+    from g2b_crawler import run_g2b_crawler, get_server_country, test_site_access
 else:
     st.error("Playwright가 설치되지 않았습니다. 페이지를 새로고침해주세요.")
     st.stop()
@@ -41,6 +41,16 @@ st.markdown("---")
 with st.sidebar:
     st.header("🔍 디버그 로그")
     debug_container = st.container()
+    # 서버 위치 안내
+    ip, country, org = get_server_country()
+    st.write(f"서버 위치: {country or '알수없음'} | IP: {ip or '-'}")
+    st.write(f"네트워크: {org or '-'}")
+    # 사이트 접근 진단
+    ok, access_msg = test_site_access("https://shop.g2b.go.kr/")
+    if ok:
+        st.success("나라장터 접근 진단: 정상")
+    else:
+        st.error(f"나라장터 접근 진단: 차단됨\n{access_msg}")
 
 search_query = st.text_input("검색어를 입력하세요", value="컴퓨터")
 
