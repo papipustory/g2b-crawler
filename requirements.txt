@@ -1,10 +1,8 @@
-streamlit
-pandas
-playwright
-openpyxl
+streamlit>=1.28.0
+pandas>=1.5.0
+playwright>=1.40.0
+openpyxl>=3.1.0
 pyee>=11.0.1
 greenlet>=3.0.1
 typing-extensions>=4.0.0
-nest_asyncio
-
-
+nest-asyncio>=1.5.0
