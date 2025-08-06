@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import subprocess
 import sys
-import os
 
 # Playwright 브라우저 설치 확인
 @st.cache_resource
@@ -24,7 +23,7 @@ if 'playwright_installed' not in st.session_state:
 
 # 크롤러 import는 Playwright 설치 후에
 if st.session_state.get('playwright_installed', False):
-    from g2b_crawler_with_status import run_g2b_crawler
+    from g2b_crawler import run_g2b_crawler  # 기존 파일명 사용!
 else:
     st.error("Playwright가 설치되지 않았습니다. 페이지를 새로고침해주세요.")
     st.stop()
@@ -38,16 +37,11 @@ search_query = st.text_input("검색어를 입력하세요", value="컴퓨터")
 # 크롤링 실행 버튼
 if st.button("🔍 크롤링 시작"):
     # 진행 상황 표시 컨테이너
-    progress_container = st.container()
     status_placeholder = st.empty()
     
-    # 진행 상황 업데이트 함수
-    def update_status(step, message):
-        status_placeholder.info(f"**단계 {step}**: {message}")
-    
     try:
-        # 크롤링 실행 (상태 업데이트 함수 전달)
-        result = run_g2b_crawler(search_query, update_status)
+        with st.spinner(f"'{search_query}' 검색 중... (최대 1분 소요)"):
+            result = run_g2b_crawler(search_query)
         
         if result:
             header, table_data = result
