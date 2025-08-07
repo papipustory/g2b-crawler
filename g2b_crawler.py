@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright, TimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
-    """iframe 문제를 해결한 최종 크롤러"""
+    """팝업 강제 제거와 명시적 대기를 통해 안정성을 극대화한 최종 크롤러"""
     browser = None
     print("--- 크롤러 시작 ---")
     try:
@@ -23,31 +23,23 @@ async def run_crawler_async(query, browser_executable_path):
             except TimeoutError:
                 print("5. 페이지 네트워크 안정화 시간 초과. 계속 진행합니다.")
 
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
 
-            print("6. 초기 팝업 닫기 시도")
-            popups = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
-            for popup in popups:
-                try:
-                    button = await popup.query_selector("button[class*='w2window_close']")
-                    if button and await button.is_visible():
-                        await button.click()
-                        print("   - 팝업 닫기 버튼 클릭")
-                        await asyncio.sleep(0.5)
-                except Exception:
-                    pass
-            print("7. 팝업 닫기 완료")
+            # --- 팝업 처리 (불도저 방식) ---
+            print("6. 화면의 모든 팝업을 강제로 제거합니다.")
+            await page.evaluate("() => { document.querySelectorAll('div[id*=\"w2popup_window\"]').forEach(el => el.remove()); document.querySelectorAll('div.w2modal_popup').forEach(el => el.style.display = 'none'); } ")
+            print("7. 팝업 강제 제거 완료.")
+            await asyncio.sleep(0.5) # DOM 변경 후 잠시 대기
 
-            print("8. '제안공고목록' 버튼 클릭")
-            await page.get_by_role("link", name="제안공고목록").click()
+            print("8. '제안공고목록' 버튼 대기 및 클릭")
+            proposal_button = page.get_by_role("link", name="제안공고목록")
+            await proposal_button.wait_for(timeout=30000)
+            await proposal_button.click()
             print("   - 성공")
 
-            # --- iframe 처리 시작 (가장 중요한 부분) ---
+            # --- iframe 처리 시작 ---
             print("9. 제안공고목록 iframe 대기 및 진입")
-            # ID에 'popPrpbList'가 포함된 div 내부의 iframe을 찾습니다. 이것이 핵심입니다.
             frame_locator = page.frame_locator('div[id*="popPrpbList"] iframe')
-            
-            # iframe 내부의 특정 요소가 나타날 때까지 기다려, 로딩을 확인합니다.
             await frame_locator.locator('input[title="3개월"]').wait_for(timeout=30000)
             print("   - iframe 진입 성공! 이제부터 모든 작업은 iframe 내부에서 수행됩니다.")
 
