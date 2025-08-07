@@ -175,60 +175,235 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
             except PlaywrightTimeout:
                 print("   - 네트워크 안정화 타임아웃 (정상)")
 
-            # 공지 팝업 닫기
-            print("7. 공지 팝업 확인")
-            for _ in range(3):
-                try:
-                    close_buttons = await page.query_selector_all('input[value="닫기"], button:has-text("닫기"), button.close')
-                    for btn in close_buttons:
-                        if await btn.is_visible():
-                            await btn.click()
-                            print("   - 팝업 닫음")
-                            await asyncio.sleep(0.5)
-                except:
-                    pass
+            # 공지 팝업 닫기 - 실제 HTML 구조에 맞춤
+            print("7. 공지 팝업 닫기 시작")
+            closed_count = 0
+            
+            for attempt in range(5):  # 최대 5번 시도
+                # 실제 G2B 팝업 구조: w2window_header를 가진 div의 부모 요소
+                popup_headers = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class='w2window_header']")
+                
+                print(f"   - 시도 {attempt + 1}: {len(popup_headers)}개의 팝업 헤더 발견")
+                
+                if len(popup_headers) == 0:
+                    if attempt == 0:
+                        print("   - 팝업이 없거나 로딩 중... 잠시 대기")
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        print("   - 더 이상 팝업이 없음")
+                        break
+                
+                closed_this_round = False
+                
+                for i, header in enumerate(popup_headers):
+                    try:
+                        # 헤더가 속한 팝업 컨테이너 찾기
+                        popup_container = await header.evaluate_handle("""
+                            (element) => {
+                                // 부모 요소 중 w2popup_window 클래스를 가진 것 찾기
+                                let parent = element.parentElement;
+                                while (parent) {
+                                    if (parent.classList && parent.classList.contains('w2popup_window')) {
+                                        return parent;
+                                    }
+                                    parent = parent.parentElement;
+                                }
+                                return element.parentElement;  // 못 찾으면 직접 부모
+                            }
+                        """)
+                        
+                        # 팝업이 보이는지 확인
+                        is_visible = await popup_container.is_visible()
+                        if not is_visible:
+                            print(f"     - 팝업 {i+1}은 이미 숨겨짐")
+                            continue
+                        
+                        print(f"     - 팝업 {i+1} 처리 중...")
+                        
+                        # 닫기 버튼 찾기 - 실제 구조에 맞춤
+                        close_button = await header.query_selector('button[type="button"][class="w2window_close"]')
+                        
+                        if not close_button:
+                            # 대체 선택자들
+                            close_button = await header.query_selector('button.w2window_close')
+                        
+                        if not close_button:
+                            # 팝업 전체에서 닫기 버튼 찾기
+                            close_button = await popup_container.query_selector('button[id$="_close"]')
+                        
+                        if not close_button:
+                            # input 타입 닫기 버튼
+                            close_button = await popup_container.query_selector('input[type="button"][value="닫기"]')
+                        
+                        if close_button and await close_button.is_visible():
+                            await close_button.click()
+                            await asyncio.sleep(0.5)  # 팝업이 닫힐 시간
+                            closed_count += 1
+                            closed_this_round = True
+                            print(f"     ✓ 팝업 {i+1} 닫기 성공 (총 {closed_count}개)")
+                        else:
+                            print(f"     - 팝업 {i+1}의 닫기 버튼을 찾을 수 없음")
+                            
+                    except Exception as e:
+                        print(f"     - 팝업 {i+1} 처리 실패: {str(e)[:50]}")
+                        continue
+                
+                if not closed_this_round:
+                    print(f"   - 이번 시도에서 닫은 팝업 없음")
+                    break
+                    
+                await asyncio.sleep(0.5)  # 다음 팝업이 나타날 시간 대기
+            
+            # 대체 방법: JavaScript로 모든 팝업 강제 닫기
+            if closed_count == 0:
+                print("   - JavaScript로 팝업 닫기 시도...")
+                js_closed = await page.evaluate("""
+                    () => {
+                        let closed = 0;
+                        // w2window_close 클래스를 가진 모든 버튼 클릭
+                        const closeButtons = document.querySelectorAll('button.w2window_close');
+                        closeButtons.forEach(btn => {
+                            if (btn && btn.offsetParent !== null) {  // visible check
+                                btn.click();
+                                closed++;
+                            }
+                        });
+                        
+                        // value가 "닫기"인 input 버튼들도 클릭
+                        const inputButtons = document.querySelectorAll('input[type="button"][value="닫기"]');
+                        inputButtons.forEach(btn => {
+                            if (btn && btn.offsetParent !== null) {
+                                btn.click();
+                                closed++;
+                            }
+                        });
+                        
+                        return closed;
+                    }
+                """)
+                
+                if js_closed > 0:
+                    closed_count = js_closed
+                    print(f"   ✓ JavaScript로 {js_closed}개 팝업 닫기 성공")
+            
+            print(f"   ✓ 총 {closed_count}개의 팝업을 닫았습니다.")
+            
+            # 팝업을 닫은 후 페이지 스크롤
+            print("   - 페이지 하단으로 스크롤")
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(1)
 
             print("\n8. '제안공고목록' 버튼 찾기")
             
-            # 버튼 찾기 - 다양한 방법 시도
+            # 버튼이 보이는지 확인하기 위해 스크롤 위치 조정
+            await page.evaluate("window.scrollTo(0, 0)")  # 상단으로
+            await asyncio.sleep(0.5)
+            
+            # 현재 페이지의 모든 링크 확인 (디버깅용)
+            all_links = await page.query_selector_all("a")
+            print(f"   - 페이지의 전체 링크 수: {len(all_links)}")
+            
+            # 제안공고 관련 링크 찾기
+            proposal_links = []
+            for link in all_links[:50]:  # 처음 50개만 확인
+                try:
+                    text = await link.inner_text()
+                    title = await link.get_attribute("title")
+                    if text and "제안" in text:
+                        proposal_links.append(f"text: {text[:30]}")
+                    elif title and "제안" in title:
+                        proposal_links.append(f"title: {title[:30]}")
+                except:
+                    continue
+            
+            if proposal_links:
+                print(f"   - 제안 관련 링크 발견: {proposal_links[:3]}")
+            
             button_clicked = False
             
-            # 방법 1: get_by_role 사용 (Playwright 권장)
-            try:
-                btn = page.get_by_role("link", name="제안공고목록")
-                await btn.click(timeout=5000)
-                button_clicked = True
-                print("   ✓ 버튼 클릭 성공 (role)")
-            except:
-                pass
+            # 방법 1: PC 버전과 동일한 선택자들
+            btn_selectors = [
+                'a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]',
+                'a[title*="제안공고목록"]',
+                'a:has-text("제안공고목록")',
+                'div.w2textbox:has-text("제안공고목록")',
+                'a[href*="Prpblist"]',
+                'a[onclick*="Prpblist"]'
+            ]
             
-            # 방법 2: get_by_text 사용
+            for sel in btn_selectors:
+                try:
+                    elem = await page.query_selector(sel)
+                    if elem and await elem.is_visible():
+                        # 요소가 뷰포트에 있는지 확인
+                        await elem.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.5)
+                        await elem.click()
+                        button_clicked = True
+                        print(f"   ✓ 버튼 클릭 성공: {sel}")
+                        break
+                except Exception as e:
+                    print(f"   - 선택자 {sel} 실패: {str(e)[:30]}")
+                    continue
+            
+            # 방법 2: XPath로 시도
             if not button_clicked:
                 try:
-                    btn = page.get_by_text("제안공고목록")
-                    await btn.click(timeout=5000)
+                    await page.click('xpath=//a[contains(text(), "제안공고목록")]', timeout=3000)
                     button_clicked = True
-                    print("   ✓ 버튼 클릭 성공 (text)")
+                    print("   ✓ 버튼 클릭 성공 (XPath)")
                 except:
                     pass
             
-            # 방법 3: CSS 선택자
+            # 방법 3: 모든 링크를 순회하며 찾기 (PC 버전과 동일)
             if not button_clicked:
-                selectors = [
-                    'a:has-text("제안공고목록")',
-                    'a[title*="제안공고"]',
-                    '[id*="btnPrpblist"]',
-                    'a[href*="prpblist"]'
-                ]
+                print("   - 모든 링크를 순회하며 찾기...")
+                all_a = await page.query_selector_all("a")
                 
-                for sel in selectors:
+                for a in all_a:
                     try:
-                        await page.click(sel, timeout=3000)
-                        button_clicked = True
-                        print(f"   ✓ 버튼 클릭 성공 ({sel})")
-                        break
+                        title = await a.get_attribute("title")
+                        href = await a.get_attribute("href")
+                        inner = await a.inner_text()
+                        
+                        if (title and "제안공고" in title) or (inner and "제안공고" in inner):
+                            print(f"     - 발견: text='{inner[:20]}', title='{title}'")
+                            
+                            # javascript:void(null) 같은 무효 링크 제외
+                            if href and href.strip() != "javascript:void(null)":
+                                await a.scroll_into_view_if_needed()
+                                await asyncio.sleep(0.2)
+                                await a.click()
+                                button_clicked = True
+                                print("   ✓ 버튼 클릭 성공 (링크 순회)")
+                                break
                     except:
                         continue
+            
+            # 방법 4: JavaScript로 강제 클릭
+            if not button_clicked:
+                print("   - JavaScript로 강제 클릭 시도...")
+                clicked = await page.evaluate("""
+                    () => {
+                        const links = document.querySelectorAll('a');
+                        for (let link of links) {
+                            if (link.innerText && link.innerText.includes('제안공고목록')) {
+                                link.click();
+                                return true;
+                            }
+                            if (link.title && link.title.includes('제안공고목록')) {
+                                link.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                """)
+                
+                if clicked:
+                    button_clicked = True
+                    print("   ✓ 버튼 클릭 성공 (JavaScript)")
             
             if not button_clicked:
                 # 페이지 내용 확인
@@ -236,6 +411,12 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
                 if len(content) < 5000:
                     raise Exception(f"페이지가 제대로 로드되지 않음 (크기: {len(content)} bytes)")
                 else:
+                    # 스크린샷 저장 (디버깅용)
+                    try:
+                        await page.screenshot(path="debug_screenshot.png")
+                        print("   - 디버그 스크린샷 저장: debug_screenshot.png")
+                    except:
+                        pass
                     raise Exception("제안공고목록 버튼을 찾을 수 없음")
 
             await asyncio.sleep(3)
