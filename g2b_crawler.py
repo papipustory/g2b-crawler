@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright, TimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
-    """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (최종 안정화 및 상세 로깅)"""
+    """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (PC버전 선택자 + 명시적 대기)"""
     browser = None
     print("--- 크롤러 시작 ---")
     try:
@@ -47,20 +47,30 @@ async def run_crawler_async(query, browser_executable_path):
             await page.wait_for_load_state('networkidle', timeout=15000)
             print("9. '제안공고목록' 페이지 로딩 완료")
 
-            print("10. '3개월' 라디오 버튼 클릭 시도")
-            await page.get_by_label("3개월").check()
+            # --- PC 버전의 선택자 + 명시적 대기 방식으로 전면 수정 ---
+            
+            print("10. '3개월' 라디오 버튼 대기 및 클릭")
+            radio_selector = 'input[title="3개월"]';
+            await page.wait_for_selector(radio_selector, timeout=30000)
+            await page.click(radio_selector)
             print("   - 성공")
 
-            print(f"11. 검색어 '{query}' 입력 시도")
-            await page.get_by_placeholder("제안공고명을 입력하세요").fill(query)
+            print(f"11. 검색어 '{query}' 입력 대기 및 실행")
+            input_selector = 'td[data-title="제안공고명"] input[type="text"]';
+            await page.wait_for_selector(input_selector)
+            await page.fill(input_selector, query)
             print("   - 성공")
 
-            print("12. 표시 수 '100'개 선택 시도")
-            await page.locator('select[id*="RecordCountPerPage"]').select_option("100")
+            print("12. 표시 수 '100'개 선택 대기 및 실행")
+            select_selector = 'select[id*="RecordCountPerPage"]';
+            await page.wait_for_selector(select_selector)
+            await page.select_option(select_selector, "100")
             print("   - 성공")
 
-            print("13. '적용' 버튼 클릭 시도")
-            await page.get_by_role("button", name="적용").click(no_wait_after=True)
+            print("13. '적용' 버튼 대기 및 클릭")
+            search_button_selector = 'input[type="button"][value="적용"]';
+            await page.wait_for_selector(search_button_selector)
+            await page.click(search_button_selector, no_wait_after=True)
             print("   - 클릭 동작 수행 완료. 이제 결과 로딩을 기다립니다.")
 
             print("14. 검색 결과 테이블이 나타날 때까지 대기 (최대 60초)")
