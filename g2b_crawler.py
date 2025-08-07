@@ -1,5 +1,5 @@
 import asyncio
-from playwright.async_api import async_playwright, PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
     """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (안정성 강화)"""
@@ -34,7 +34,7 @@ async def run_crawler_async(query, browser_executable_path):
                 # 가장 불안정한 부분이므로, 실패하더라도 계속 진행하도록 처리
                 await page.wait_for_load_state('networkidle', timeout=15000)
                 print("5. 페이지 네트워크 안정화 완료")
-            except PlaywrightTimeoutError:
+            except TimeoutError:
                 print("5. 페이지 네트워크 안정화 시간 초과. 계속 진행합니다.")
             except Exception as e:
                 print(f"5. 페이지 로딩 중 예외 발생: {e}. 계속 진행합니다.")
