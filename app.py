@@ -1,36 +1,8 @@
 import streamlit as st
 import pandas as pd
-import subprocess
-import sys
 import io
 from contextlib import redirect_stdout
-
-@st.cache_resource
-def install_playwright():
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            return True
-        else:
-            st.error(f"Playwright 설치 실패: {result.stderr}")
-            return False
-    except Exception as e:
-        st.error(f"Playwright 설치 중 오류: {e}")
-        return False
-
-if 'playwright_installed' not in st.session_state:
-    with st.spinner("Playwright 브라우저 설치 중... (첫 실행 시에만 필요)"):
-        st.session_state.playwright_installed = install_playwright()
-
-if st.session_state.get('playwright_installed', False):
-    from g2b_crawler import run_g2b_crawler
-else:
-    st.error("Playwright가 설치되지 않았습니다. 페이지를 새로고침해주세요.")
-    st.stop()
+from g2b_crawler import run_g2b_crawler
 
 st.title("🏛️ 나라장터 제안공고 크롤러")
 st.markdown("---")
