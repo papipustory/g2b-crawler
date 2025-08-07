@@ -7,6 +7,8 @@ async def run_crawler_async(query="컴퓨터"):
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
+                # 실행 환경에 함께 복사된 브라우저를 사용하도록 경로를 명시합니다.
+                executable_path="./pw-browsers/chromium-1091/chrome-linux/chrome",
                 args=[
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
