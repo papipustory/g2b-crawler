@@ -105,7 +105,7 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
             print("4. 새 페이지 생성 완료")
             
             page.set_default_timeout(30000)
-            page.set_default_navigation_timeout(60000)
+            page.set_default_navigation_timeout(30000)
 
             print("5. G2B 사이트 접속 시도")
             
