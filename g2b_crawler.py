@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright, TimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
-    """지능형 대기 루프를 사용하여 안정성을 극대화한 최종 크롤러"""
+    """3단계 대기(팝업->iframe->내용물)로 안정성을 극대화한 최종 크롤러"""
     browser = None
     print("--- 크롤러 시작 ---")
     try:
@@ -23,67 +23,52 @@ async def run_crawler_async(query, browser_executable_path):
             except TimeoutError:
                 print("5. 페이지 네트워크 안정화 시간 초과. 계속 진행합니다.")
 
-            # --- 지능형 대기 루프 시작 ---
-            print("6. 팝업을 닫고 '제안공고목록' 버튼이 나타날 때까지 대기합니다.")
-            proposal_button = page.get_by_role("link", name="제안공고목록")
-            
-            for i in range(15): # 최대 30초간 시도
-                try:
-                    # 버튼이 보이면 루프를 탈출하고 성공 처리
-                    if await proposal_button.is_visible():
-                        print(f"   - '제안공고목록' 버튼 발견! (시도 {i+1})")
-                        break
-                    
-                    # 버튼이 안 보이면, 팝업을 닫으려고 시도
-                    popups = await page.locator("div[id*='w2popup_window']").all()
-                    if popups:
-                        print(f"   - 팝업 발견. 닫기를 시도합니다.")
-                        for popup in popups:
-                            close_btn = popup.locator("button[class*='w2window_close']")
-                            if await close_btn.is_visible():
-                                await close_btn.click(timeout=5000)
-                                print("     - 팝업 닫기 버튼 클릭 성공.")
-                    else:
-                        print(f"   - 팝업 없음. 버튼을 기다립니다. (시도 {i+1})")
+            await asyncio.sleep(1)
 
-                    await page.wait_for_timeout(1000) # 1초 대기 후 재시도
-
-                except Exception as e:
-                    print(f"   - 대기 중 오류 발생: {e}")
-                    await page.wait_for_timeout(1000)
-            
-            if not await proposal_button.is_visible():
-                raise Exception("'제안공고목록' 버튼을 최종적으로 찾지 못했습니다.")
-
-            print("7. '제안공고목록' 버튼 클릭")
-            await proposal_button.click()
+            print("6. '제안공고목록' 버튼 클릭")
+            # 팝업이 뜰 수 있으므로, 클릭 후 네비게이션을 기다리지 않습니다.
+            await page.get_by_role("link", name="제안공고목록").click(no_wait_after=True)
             print("   - 성공")
 
-            # --- iframe 처리 시작 ---
-            print("8. 제안공고목록 iframe 대기 및 진입")
-            frame_locator = page.frame_locator('div[id*="popPrpbList"] iframe')
-            await frame_locator.locator('input[title="3개월"]').wait_for(timeout=30000)
-            print("   - iframe 진입 성공!")
+            # --- 3단계 대기 로직 시작 (가장 중요한 부분) ---
+            
+            # 1단계: 팝업창(div) 자체가 나타날 때까지 대기
+            print("7. 팝업창(div)이 나타날 때까지 대기")
+            popup_div_selector = 'div[id*="popPrpbList"]'
+            await page.wait_for_selector(popup_div_selector, state='visible', timeout=30000)
+            print("   - 팝업창(div) 발견!")
 
-            print("9. '3개월' 라디오 버튼 클릭")
+            # 2단계: 해당 팝업창 내부의 iframe을 찾음
+            print("8. iframe으로 제어권 전환")
+            frame_locator = page.frame_locator(f'{popup_div_selector} iframe')
+            print("   - iframe 찾음!")
+
+            # 3단계: iframe 내부의 내용물('3개월' 버튼)이 로드될 때까지 대기
+            print("9. iframe 내부 콘텐츠가 로드될 때까지 대기")
+            await frame_locator.locator('input[title="3개월"]').wait_for(timeout=30000)
+            print("   - iframe 내용물 로드 완료!")
+
+            # --- 이제부터 모든 선택은 frame_locator를 통해 수행합니다. ---
+            
+            print("10. '3개월' 라디오 버튼 클릭")
             await frame_locator.locator('input[title="3개월"]').click()
             print("   - 성공")
 
-            print(f"10. 검색어 '{query}' 입력")
+            print(f"11. 검색어 '{query}' 입력")
             await frame_locator.locator('td[data-title="제안공고명"] input[type="text"]').fill(query)
             print("   - 성공")
 
-            print("11. 표시 수 '100'개 선택")
+            print("12. 표시 수 '100'개 선택")
             await frame_locator.locator('select[id*="RecordCountPerPage"]').select_option("100")
             print("   - 성공")
 
-            print("12. '적용' 버튼 클릭")
+            print("13. '적용' 버튼 클릭")
             await frame_locator.locator('input[type="button"][value="적용"]').click(no_wait_after=True)
             print("   - 클릭 동작 수행 완료. 이제 결과 로딩을 기다립니다.")
 
-            print("13. 검색 결과 테이블 대기 (최대 60초)")
+            print("14. 검색 결과 테이블 대기 (최대 60초)")
             await frame_locator.locator('table[id$="grdPrpsPbanc_body_table"]').wait_for(timeout=60000)
-            print("14. 검색 결과 로딩 완료. 테이블 파싱 시작.")
+            print("15. 검색 결과 로딩 완료. 테이블 파싱 시작.")
             table_elem = frame_locator.locator('table[id$="grdPrpsPbanc_body_table"]')
             headers = []
             data = []
