@@ -2,24 +2,13 @@ import asyncio
 from playwright.async_api import async_playwright, TimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
-    """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (최종 안정화)"""
+    """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (최종 안정화 및 상세 로깅)"""
     browser = None
     print("--- 크롤러 시작 ---")
     try:
         async with async_playwright() as p:
             print("1. Playwright 컨텍스트 시작")
-            browser = await p.chromium.launch(
-                headless=True,
-                executable_path=browser_executable_path,
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--single-process',
-                    '--no-zygote'
-                ]
-            )
+            browser = await p.chromium.launch(headless=True, executable_path=browser_executable_path, args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'])
             print("2. 브라우저 실행 완료")
             context = await browser.new_context()
             page = await context.new_page()
@@ -41,64 +30,40 @@ async def run_crawler_async(query, browser_executable_path):
             await asyncio.sleep(3)
 
             print("6. 팝업 닫기 시도")
-            for i in range(5):
-                popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
-                if not popup_divs:
-                    print(f"   - 팝업 없음 (시도 {i+1})")
-                    break
-                for popup in popup_divs:
+            for _ in range(5):
+                popups = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+                if not popups: break
+                for popup in popups:
                     try:
-                        close_button = await popup.query_selector("button[class*='w2window_close']")
-                        if close_button and await close_button.is_visible():
-                            await close_button.click()
-                            print("   - 일반 팝업 닫기 버튼 클릭")
-                            await asyncio.sleep(0.3)
-                    except Exception:
-                        pass
+                        button = await popup.query_selector("button[class*='w2window_close']")
+                        if button and await button.is_visible(): await button.click(); print("   - 팝업 닫기 버튼 클릭")
+                    except Exception: pass
             print("7. 팝업 닫기 완료")
-            await page.keyboard.press('End')
-            await asyncio.sleep(1)
 
             print("8. '제안공고목록' 버튼 클릭 시도")
-            btn_selectors = ['a[id^="mf_wfm_container_wq_uuid_"][id$="_btnPrpblist"]', 'a[title*="제안공고목록"]', 'a:has-text("제안공고목록")']
-            clicked = False
-            for sel in btn_selectors:
-                try:
-                    elem = await page.query_selector(sel)
-                    if elem and await elem.is_visible():
-                        await elem.scroll_into_view_if_needed()
-                        await elem.click()
-                        clicked = True
-                        print(f"   - 성공: 선택자 '{sel}'")
-                        break
-                except Exception:
-                    continue
-            if not clicked: print("   - 실패: '제안공고목록' 버튼을 찾지 못함")
+            await page.get_by_role("link", name="제안공고목록").click()
+            print("   - 성공")
 
-            await page.wait_for_load_state('networkidle', timeout=10000)
+            await page.wait_for_load_state('networkidle', timeout=15000)
             print("9. '제안공고목록' 페이지 로딩 완료")
 
             print("10. '3개월' 라디오 버튼 클릭 시도")
-            radio_3month = await page.query_selector('input[title="3개월"]')
-            if radio_3month: await radio_3month.click(); print("   - 성공"); await asyncio.sleep(1)
+            await page.get_by_label("3개월").check()
+            print("   - 성공")
 
             print(f"11. 검색어 '{query}' 입력 시도")
-            input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
-            if input_elem: await input_elem.fill(query); print("   - 성공"); await asyncio.sleep(0.5)
+            await page.get_by_placeholder("제안공고명을 입력하세요").fill(query)
+            print("   - 성공")
 
             print("12. 표시 수 '100'개 선택 시도")
-            select_elem = await page.query_selector('select[id*="RecordCountPerPage"]')
-            if select_elem: await select_elem.select_option("100"); print("   - 성공"); await asyncio.sleep(1)
+            await page.locator('select[id*="RecordCountPerPage"]').select_option("100")
+            print("   - 성공")
 
-            print("13. '적용/검색' 버튼 클릭 시도")
-            search_button = await page.query_selector('input[type="button"][value="적용"], input[type="button"][value="검색"]')
-            if search_button:
-                # 클릭 동작과 대기 동작을 명확히 분리합니다.
-                await search_button.click(no_wait_after=True)
-                print("   - 클릭 동작 수행 완료. 이제 결과 로딩을 기다립니다.")
+            print("13. '적용' 버튼 클릭 시도")
+            await page.get_by_role("button", name="적용").click(no_wait_after=True)
+            print("   - 클릭 동작 수행 완료. 이제 결과 로딩을 기다립니다.")
 
             print("14. 검색 결과 테이블이 나타날 때까지 대기 (최대 60초)")
-            # 느린 클라우드 환경을 위해 타임아웃을 넉넉하게 설정합니다.
             await page.wait_for_selector('table[id$="grdPrpsPbanc_body_table"]', timeout=60000)
             print("15. 검색 결과 로딩 완료. 테이블 파싱 시작.")
             table_elem = await page.query_selector('table[id$="grdPrpsPbanc_body_table"]')
