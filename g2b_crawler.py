@@ -1,4 +1,56 @@
-# g2b_crawler.py - Streamlit Cloud 최적화 버전
+# 검색어 입력 - 더 정확한 선택자 사용
+            try:
+                print(f"   - 검색어 '{query}' 입력 시도...")
+                
+                # 방법 1: data-title 속성으로 찾기
+                input_found = False
+                input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
+                
+                if input_elem:
+                    await input_elem.click()  # 먼저 클릭하여 포커스
+                    await input_elem.fill("")  # 기존 내용 삭제
+                    await input_elem.type(query, delay=100)  # 천천히 타이핑
+                    input_found = True
+                    print(f"   ✓ 검색어 '{query}' 입력 (data-title)")
+                
+                # 방법 2: placeholder나 title로 찾기
+                if not input_found:
+                    input_elem = await page.query_selector('input[placeholder*="제안공고명"], input[title*="제안공고명"]')
+                    if input_elem:
+                        await input_elem.click()
+                        await input_elem.fill("")
+                        await input_elem.type(query, delay=100)
+                        input_found = True
+                        print(f"   ✓ 검색어 '{query}' 입력 (placeholder/title)")
+                
+                # 방법 3: JavaScript로 강제 입력
+                if not input_found:
+                    js_result = await page.evaluate(f"""
+                        () => {{
+                            // 모든 input 요소를 순회
+                            const inputs = document.querySelectorAll('input[type="text"]');
+                            for (let input of inputs) {{
+                                // TD 부모 요소 확인
+                                const td = input.closest('td');
+                                if (td) {{
+                                    const dataTitle = td.getAttribute('data-title');
+                                    const title = td.getAttribute('title');
+                                    
+                                    // 제안공고명 필드 찾기
+                                    if ((dataTitle && dataTitle.includes('제안공고명')) ||
+                                        (title && title.includes('제안공고명'))) {{
+                                        input.value = '{query}';
+                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                        return true;
+                                    }}
+                                }}
+                                
+                                // placeholder나 title 확인
+                                if ((input.placeholder && input.placeholder.includes('제안공고')) ||
+                                    (input.title && input.title.includes('제안공고'))) {{
+                                    input.value = '{query}';
+                                    input# g2b_crawler.py - Streamlit Cloud 최적화 버전
 import asyncio
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import pandas as pd
@@ -441,23 +493,82 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
                 """)
                 print("   ✓ 3개월 선택 (JS)")
 
-            # 검색어 입력
+            # 검색어 입력 - 확실하게 입력되도록 개선
+            print(f"   - 검색어 '{query}' 입력 중...")
+            input_success = False
+            
+            # 방법 1: data-title로 찾기
             try:
-                await page.fill('input[type="text"][title*="제안공고명"]', query, timeout=3000)
-                print(f"   ✓ 검색어 '{query}' 입력")
-            except:
-                await page.evaluate(f"""
-                    const inputs = document.querySelectorAll('input[type="text"]');
-                    for (let input of inputs) {{
-                        const td = input.closest('td');
-                        if (td && td.getAttribute('data-title') === '제안공고명') {{
-                            input.value = '{query}';
-                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                            break;
+                input_elem = await page.query_selector('td[data-title="제안공고명"] input[type="text"]')
+                if input_elem:
+                    await input_elem.click()  # 포커스
+                    await asyncio.sleep(0.2)
+                    await input_elem.fill("")  # 기존 값 삭제
+                    await asyncio.sleep(0.2)
+                    await input_elem.type(query, delay=50)  # 천천히 타이핑
+                    await asyncio.sleep(0.3)
+                    
+                    # 입력 확인
+                    input_value = await input_elem.input_value()
+                    if input_value == query:
+                        input_success = True
+                        print(f"   ✓ 검색어 '{query}' 입력 완료")
+                    else:
+                        print(f"   ⚠️ 입력 값 불일치: '{input_value}' != '{query}'")
+            except Exception as e:
+                print(f"   - 방법 1 실패: {str(e)[:50]}")
+            
+            # 방법 2: JavaScript로 강제 입력
+            if not input_success:
+                try:
+                    js_result = await page.evaluate(f"""
+                        () => {{
+                            let found = false;
+                            // 모든 input 찾기
+                            const inputs = document.querySelectorAll('input[type="text"]');
+                            
+                            for (let input of inputs) {{
+                                const td = input.closest('td');
+                                if (td && td.getAttribute('data-title') === '제안공고명') {{
+                                    input.focus();
+                                    input.value = '';
+                                    input.value = '{query}';
+                                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    input.dispatchEvent(new KeyboardEvent('keyup', {{ bubbles: true }}));
+                                    found = true;
+                                    return {{ success: true, value: input.value }};
+                                }}
+                            }}
+                            
+                            // 못 찾은 경우 placeholder로 시도
+                            if (!found) {{
+                                for (let input of inputs) {{
+                                    if (input.placeholder && input.placeholder.includes('제안공고')) {{
+                                        input.focus();
+                                        input.value = '{query}';
+                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                        return {{ success: true, value: input.value }};
+                                    }}
+                                }}
+                            }}
+                            
+                            return {{ success: false, value: null }};
                         }}
-                    }}
-                """)
-                print(f"   ✓ 검색어 '{query}' 입력 (JS)")
+                    """)
+                    
+                    if js_result and js_result.get('success'):
+                        input_success = True
+                        print(f"   ✓ 검색어 '{query}' 입력 완료 (JS)")
+                        print(f"     입력된 값: {js_result.get('value')}")
+                except Exception as e:
+                    print(f"   - 방법 2 실패: {str(e)[:50]}")
+            
+            # 입력 확인 대기
+            if input_success:
+                await asyncio.sleep(0.5)  # 입력이 반영될 시간
+            else:
+                print(f"   ⚠️ 검색어 입력 실패! 전체 검색이 될 수 있습니다.")
 
             # 표시 수 100개
             try:
@@ -481,6 +592,26 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
             except:
                 pass
 
+            # 검색 버튼 클릭 전 입력 값 최종 확인
+            print("   - 검색 버튼 클릭 전 입력 값 확인...")
+            final_check = await page.evaluate("""
+                () => {
+                    const inputs = document.querySelectorAll('input[type="text"]');
+                    for (let input of inputs) {
+                        const td = input.closest('td');
+                        if (td && td.getAttribute('data-title') === '제안공고명') {
+                            return input.value;
+                        }
+                    }
+                    return null;
+                }
+            """)
+            
+            if final_check:
+                print(f"     현재 입력된 검색어: '{final_check}'")
+            else:
+                print("     ⚠️ 검색어 필드를 찾을 수 없음")
+            
             # 검색 버튼
             try:
                 await page.click('input[value="검색"]', timeout=3000)
