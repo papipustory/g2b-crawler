@@ -1,8 +1,8 @@
 import asyncio
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, PlaywrightTimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
-    """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (상세 로깅 추가)"""
+    """Playwright를 사용해 비동기적으로 크롤링을 수행하는 내부 함수 (안정성 강화)"""
     browser = None
     print("--- 크롤러 시작 ---")
     try:
@@ -27,12 +27,23 @@ async def run_crawler_async(query, browser_executable_path):
 
             await page.goto("https://shop.g2b.go.kr/", timeout=60000)
             print("4. 초기 페이지 접속 성공")
-            await page.wait_for_load_state('networkidle', timeout=20000)
-            print("5. 페이지 네트워크 안정화 완료")
+            print(f"   - 현재 URL: {page.url}")
+            print(f"   - 현재 페이지 제목: '{await page.title()}'")
+
+            try:
+                # 가장 불안정한 부분이므로, 실패하더라도 계속 진행하도록 처리
+                await page.wait_for_load_state('networkidle', timeout=15000)
+                print("5. 페이지 네트워크 안정화 완료")
+            except PlaywrightTimeoutError:
+                print("5. 페이지 네트워크 안정화 시간 초과. 계속 진행합니다.")
+            except Exception as e:
+                print(f"5. 페이지 로딩 중 예외 발생: {e}. 계속 진행합니다.")
+
             await asyncio.sleep(3)
 
             # --- 이하 크롤링 상세 로직 ---
             print("6. 팝업 닫기 시도")
+            # ... (이하 로직은 이전과 동일하게 유지) ...
             for i in range(5):
                 popup_divs = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
                 if not popup_divs:
