@@ -103,7 +103,7 @@ async def run_crawler_async(query, browser_executable_path):
                 await asyncio.sleep(1)
 
             print("13. '적용/검색' 버튼 클릭 시도")
-            search_button = await page.query_selector('input[type="button'][value="적용"], input[type="button"][value="검색"]')
+            search_button = await page.query_selector('input[type="button"][value="적용"], input[type="button"][value="검색"]')
             if search_button:
                 await search_button.click()
                 print("   - 성공")
