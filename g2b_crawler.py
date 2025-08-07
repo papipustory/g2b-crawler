@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright, TimeoutError
 
 async def run_crawler_async(query, browser_executable_path):
-    """iframe의 주소를 찾기 위한 디버깅용 크롤러"""
+    """iframe 문제를 해결한 최종 크롤러"""
     browser = None
     print("--- 크롤러 시작 ---")
     try:
@@ -25,33 +25,68 @@ async def run_crawler_async(query, browser_executable_path):
 
             await asyncio.sleep(3)
 
-            print("6. 팝업 닫기 시도")
-            for _ in range(5):
-                popups = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
-                if not popups: break
-                for popup in popups:
-                    try:
-                        button = await popup.query_selector("button[class*='w2window_close']")
-                        if button and await button.is_visible(): await button.click(); print("   - 팝업 닫기 버튼 클릭")
-                    except Exception: pass
+            print("6. 초기 팝업 닫기 시도")
+            popups = await page.query_selector_all("div[id^='mf_wfm_container_wq_uuid_'][class*='w2popup_window']")
+            for popup in popups:
+                try:
+                    button = await popup.query_selector("button[class*='w2window_close']")
+                    if button and await button.is_visible():
+                        await button.click()
+                        print("   - 팝업 닫기 버튼 클릭")
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
             print("7. 팝업 닫기 완료")
 
-            print("8. '제안공고목록' 버튼 클릭 시도")
+            print("8. '제안공고목록' 버튼 클릭")
             await page.get_by_role("link", name="제안공고목록").click()
             print("   - 성공")
 
-            # 잠시 기다려 iframe이 로드될 시간을 줍니다.
-            await asyncio.sleep(5)
-            print("9. iframe 로드 대기 완료")
+            # --- iframe 처리 시작 (가장 중요한 부분) ---
+            print("9. 제안공고목록 iframe 대기 및 진입")
+            # ID에 'popPrpbList'가 포함된 div 내부의 iframe을 찾습니다. 이것이 핵심입니다.
+            frame_locator = page.frame_locator('div[id*="popPrpbList"] iframe')
+            
+            # iframe 내부의 특정 요소가 나타날 때까지 기다려, 로딩을 확인합니다.
+            await frame_locator.locator('input[title="3개월"]').wait_for(timeout=30000)
+            print("   - iframe 진입 성공! 이제부터 모든 작업은 iframe 내부에서 수행됩니다.")
 
-            # --- iframe의 주소를 찾기 위해 현재 페이지의 전체 HTML을 출력합니다. ---
-            print("\n--- 페이지의 모든 iframe을 찾기 위해 현재 HTML 구조를 출력합니다. ---")
-            html_content = await page.content()
-            print(html_content)
-            print("--- HTML 구조 출력 완료 ---")
+            # --- 이제부터 모든 선택은 frame_locator를 통해 수행합니다. ---
+            
+            print("10. '3개월' 라디오 버튼 클릭")
+            await frame_locator.locator('input[title="3개월"]').click()
+            print("   - 성공")
 
-            # 여기서 일단 실행을 멈추고 로그를 확인합니다.
-            return None, None
+            print(f"11. 검색어 '{query}' 입력")
+            await frame_locator.locator('td[data-title="제안공고명"] input[type="text"]').fill(query)
+            print("   - 성공")
+
+            print("12. 표시 수 '100'개 선택")
+            await frame_locator.locator('select[id*="RecordCountPerPage"]').select_option("100")
+            print("   - 성공")
+
+            print("13. '적용' 버튼 클릭")
+            await frame_locator.locator('input[type="button"][value="적용"]').click(no_wait_after=True)
+            print("   - 클릭 동작 수행 완료. 이제 결과 로딩을 기다립니다.")
+
+            print("14. 검색 결과 테이블 대기 (최대 60초)")
+            await frame_locator.locator('table[id$="grdPrpsPbanc_body_table"]').wait_for(timeout=60000)
+            print("15. 검색 결과 로딩 완료. 테이블 파싱 시작.")
+            table_elem = frame_locator.locator('table[id$="grdPrpsPbanc_body_table"]')
+            headers = []
+            data = []
+            rows = await table_elem.locator('tr').all()
+            for row in rows:
+                tds = await row.locator('td').all()
+                cols = [await td.inner_text() for td in tds]
+                if cols and any(c.strip() for c in cols):
+                    data.append([c.strip() for c in cols])
+
+            headers = ["No", "제안공고번호", "수요기관", "제안공고명", "공고게시일자", "공고마감일시", "공고상태", "사유", "기타"]
+            if data and len(data[0]) < len(headers): headers = headers[:len(data[0])]
+            print(f"   - 성공: {len(data)}개의 행을 찾음")
+            
+            return headers, data
 
     except Exception as e:
         print(f"[CRITICAL ERROR] 크롤링 중 예외 발생: {e}")
