@@ -38,13 +38,13 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
                     headless=True,
                     executable_path=browser_executable_path,
                     args=browser_args,
-                    timeout=8000
+                    timeout=18000
                 )
             else:
                 browser = await p.chromium.launch(
                     headless=True,
                     args=browser_args,
-                    timeout=10000
+                    timeout=18000
                 )
 
             # --- 컨텍스트 생성 ---
@@ -90,7 +90,7 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
             page_loaded = False
             for url in urls_to_try:
                 try:
-                    response = await page.goto(url, wait_until='domcontentloaded', timeout=5000)
+                    response = await page.goto(url, wait_until='domcontentloaded', timeout=9000)
                     if response and response.status == 200:
                         await asyncio.sleep(0.7)
                         title = await page.title()
@@ -109,7 +109,7 @@ async def run_crawler_async(query="컴퓨터", browser_executable_path=None):
                 await asyncio.sleep(0.7)
 
             try:
-                await page.wait_for_load_state('domcontentloaded', timeout=5000)
+                await page.wait_for_load_state('domcontentloaded', timeout=7000)
             except PlaywrightTimeout:
                 pass
 
